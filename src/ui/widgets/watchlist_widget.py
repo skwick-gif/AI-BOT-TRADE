@@ -38,31 +38,55 @@ class WatchlistDataWorker(QObject):
         self.is_running = False
     
     def fetch_data(self):
-        """Fetch data for all symbols"""
+        """Fetch data for all symbols from local bronze parquet files"""
         try:
-            # TODO: Implement real market data fetching
-            # This should connect to IBKR or other market data providers
-            # For now, just emit empty data structure
-            
-            for symbol in self.symbols:
+            from pathlib import Path
+            import math
+            import pandas as pd
+            if not hasattr(self, 'symbols'):
+                return
+            bronze_dir = Path("data/bronze/daily")
+            for symbol in list(self.symbols):
                 if not self.is_running:
                     break
-                
-                data = {
-                    'symbol': symbol,
-                    'price': 0.0,
-                    'change': 0.0,
-                    'change_pct': 0.0,
-                    'volume': 0,
-                    'bid': 0.0,
-                    'ask': 0.0,
-                    'high': 0.0,
-                    'low': 0.0,
-                    'previous_close': 0.0
-                }
-                
-                self.data_updated.emit(symbol, data)
-                
+                try:
+                    fp = bronze_dir / f"{symbol}.parquet"
+                    if not fp.exists():
+                        # Skip symbols without local parquet data (no mock data)
+                        continue
+                    df = pd.read_parquet(fp)
+                    if df.empty:
+                        continue
+                    # Ensure sorted by date if present
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                        df = df.dropna(subset=['date']).sort_values('date')
+                    last = df.iloc[-1]
+                    prev = df.iloc[-2] if len(df) > 1 else None
+                    price = float(last.get('close', last.get('adj_close', math.nan)))
+                    previous_close = float(prev.get('close')) if prev is not None and 'close' in df.columns else price
+                    change = price - previous_close
+                    change_pct = (change / previous_close * 100) if previous_close else 0.0
+                    volume = int(last.get('volume', 0) or 0)
+                    bid = price  # placeholder
+                    ask = price  # placeholder
+                    high = float(last.get('high', price))
+                    low = float(last.get('low', price))
+                    data = {
+                        'symbol': symbol,
+                        'price': price,
+                        'change': change,
+                        'change_pct': change_pct,
+                        'volume': volume,
+                        'bid': bid,
+                        'ask': ask,
+                        'high': high,
+                        'low': low,
+                        'previous_close': previous_close
+                    }
+                    self.data_updated.emit(symbol, data)
+                except Exception as ie:
+                    self.logger.warning(f"Watchlist read error for {symbol}: {ie}")
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -407,6 +431,9 @@ class WatchlistWidget(QWidget):
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self.refresh_data)
         title_layout.addWidget(refresh_btn)
+        delete_btn = QPushButton("🗑️ Delete Selected")
+        delete_btn.clicked.connect(self.delete_selected)
+        title_layout.addWidget(delete_btn)
         
         layout.addLayout(title_layout)
         
@@ -502,8 +529,12 @@ class WatchlistWidget(QWidget):
     
     def update_data(self):
         """Update watchlist data"""
-        # Data is updated automatically by the worker thread
-        pass
+        try:
+            if hasattr(self, 'data_worker') and self.data_worker.is_running:
+                # Trigger fetch in worker thread
+                QTimer.singleShot(0, self.data_worker.fetch_data)
+        except Exception as e:
+            self.logger.error(f"Update data error: {e}")
     
     def refresh_data(self):
         """Manually refresh watchlist data"""
@@ -513,6 +544,19 @@ class WatchlistWidget(QWidget):
             self.data_worker.start_monitoring(symbols)
         
         self.logger.info("Manual watchlist refresh requested")
+
+    def delete_selected(self):
+        """Delete the currently selected ticker from the list"""
+        sel_ranges = self.watchlist_table.selectedItems()
+        if not sel_ranges:
+            return
+        # Get the row of the first selected item
+        row = sel_ranges[0].row()
+        symbol_item = self.watchlist_table.item(row, 0)
+        if not symbol_item:
+            return
+        symbol = symbol_item.text()
+        self.remove_symbol(symbol)
     
     def on_tab_activated(self):
         """Called when tab becomes active"""
@@ -521,6 +565,12 @@ class WatchlistWidget(QWidget):
     
     def closeEvent(self, event):
         """Handle widget close"""
+        # Stop update timer
+        if hasattr(self, 'update_timer') and isinstance(self.update_timer, QTimer):
+            try:
+                self.update_timer.stop()
+            except Exception:
+                pass
         # Stop data worker
         if hasattr(self, 'data_worker'):
             self.data_worker.stop_monitoring()

@@ -3,11 +3,11 @@ echo ========================================
 echo Installing AI Trading Bot Dependencies
 echo ========================================
 
-REM Check if Python is installed
+REM Check if Python launcher is available
 py --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python is not installed or not in PATH!
-    echo Please install Python 3.12+ and add it to your PATH
+    echo Please install Python 3.12+ (via Microsoft Store or python.org) and ensure 'py' launcher is available
     pause
     exit /b 1
 )
@@ -17,9 +17,10 @@ echo Python found. Creating virtual environment...
 REM Create virtual environment if it doesn't exist
 if not exist ".venv" (
     echo Creating virtual environment...
-    python -m venv .venv
+    py -m venv .venv
     if errorlevel 1 (
         echo ERROR: Failed to create virtual environment!
+        echo Tip: If multiple Python versions are installed, run 'py -m venv .venv' manually.
         pause
         exit /b 1
     )
@@ -32,41 +33,36 @@ echo Activating virtual environment...
 call .venv\Scripts\activate.bat
 
 echo Upgrading pip...
-py -m pip install --upgrade pip
+python -m pip install --upgrade pip
 
-echo Installing core dependencies...
-pip install PyQt6>=6.5.0
-pip install PyQt6-tools
-pip install ib-insync>=0.9.86
-pip install pandas>=2.0.0
-pip install numpy>=1.24.0
-pip install requests>=2.31.0
-pip install python-dotenv>=1.0.0
-pip install aiohttp>=3.8.0
-pip install nest-asyncio>=1.5.0
-
-echo Installing ML dependencies...
-pip install scikit-learn>=1.3.0
-pip install xgboost>=1.7.0
-pip install lightgbm>=4.0.0
-pip install joblib>=1.3.0
-
-echo Installing technical analysis...
-pip install TA-Lib
-if errorlevel 1 (
-    echo WARNING: TA-Lib installation failed. Trying alternative...
-    pip install talib-binary
+echo Installing dependencies from requirements files...
+if exist requirements.txt (
+    python -m pip install -r requirements.txt
+) else (
+    echo WARNING: requirements.txt not found; installing a minimal core set...
+)
+if exist requirements-pyqt6.txt (
+    python -m pip install -r requirements-pyqt6.txt
+) else (
+    echo WARNING: requirements-pyqt6.txt not found; ensuring PyQt6 is installed...
+    python -m pip install PyQt6
 )
 
-pip install pandas-ta>=0.3.14b0
+echo Ensuring additional core packages are present...
+python -m pip install ib_insync pandas numpy requests python-dotenv aiohttp nest-asyncio yfinance pandas_ta
+
+echo Installing ML packages (optional)...
+python -m pip install scikit-learn xgboost lightgbm joblib
+
+echo Installing TA-Lib (optional)...
+python -m pip install TA-Lib
 if errorlevel 1 (
-    echo Installing stable version of pandas-ta...
-    pip install pandas-ta
+    echo WARNING: TA-Lib native build may fail on Windows; trying prebuilt binary wheel...
+    python -m pip install talib-binary
 )
 
-echo Installing additional utilities...
-pip install plotly>=5.15.0
-pip install yfinance>=0.2.0
+echo Installing visualization utilities...
+python -m pip install plotly
 
 echo Creating necessary directories...
 if not exist "models" mkdir models

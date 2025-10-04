@@ -23,6 +23,7 @@ class ScannerWorker(QObject):
     results_updated = pyqtSignal(list)
     scan_completed = pyqtSignal(int)
     error_occurred = pyqtSignal(str)
+    status_updated = pyqtSignal(str)
     
     def __init__(self, config: ConfigManager):
         super().__init__()
@@ -31,44 +32,129 @@ class ScannerWorker(QObject):
         self.is_scanning = False
     
     def start_scan(self, criteria: dict):
-        """Start scanning with given criteria"""
+        """Scan local bronze parquet data and apply filters."""
         try:
+            from pathlib import Path
+            import math
+            import pandas as pd
             self.is_scanning = True
             self.progress_updated.emit(0)
-            
-            # TODO: Implement real stock scanning
-            # This should connect to real market data and apply filters
-            
-            import time
-            
-            steps = [
-                "Initializing scanner...",
-                "Connecting to data source...",
-                "Loading market data...", 
-                "Applying filters...",
-                "Processing results...",
-                "Finalizing scan...",
-                "Scan ready - connect data source for real results"
-            ]
-            
+            self.status_updated.emit("Initializing scanner…")
+
+            bronze_dir = Path("data/bronze/daily")
+            if not bronze_dir.exists():
+                raise RuntimeError("Bronze data directory not found: data/bronze/daily")
+            files = list(bronze_dir.glob("*.parquet"))
+            total = len(files)
+            if total == 0:
+                raise RuntimeError("No parquet files in data/bronze/daily")
+            self.status_updated.emit(f"Loading {total} tickers…")
+
+            # optional RSI via pandas_ta
+            try:
+                import pandas_ta as ta  # type: ignore
+            except Exception:
+                ta = None
+
+            min_price = float(criteria.get('min_price', 0) or 0)
+            max_price = float(criteria.get('max_price', 1e9) or 1e9)
+            min_volume = int(criteria.get('min_volume', 0) or 0)
+            min_change = float(criteria.get('min_change', -100) or -100)
+            max_change = float(criteria.get('max_change', 100) or 100)
+            min_rsi = int(criteria.get('min_rsi', 0) or 0)
+            max_rsi = int(criteria.get('max_rsi', 100) or 100)
+            above_sma20 = bool(criteria.get('above_sma20', False))
+            above_sma50 = bool(criteria.get('above_sma50', False))
+            above_sma200 = bool(criteria.get('above_sma200', False))
+
             results = []
-            
-            for i, step in enumerate(steps):
+            processed = 0
+            errors = 0
+            for idx, fp in enumerate(files, start=1):
                 if not self.is_scanning:
                     break
-                    
-                self.status_updated.emit(step)
-                progress = int((i + 1) / len(steps) * 100)
-                self.progress_updated.emit(progress)
-                
-                # Simulate work
-                time.sleep(0.5)
-            
+                try:
+                    df = pd.read_parquet(fp)
+                    if df.empty:
+                        continue
+                    # Ensure date sorted
+                    if 'date' in df.columns:
+                        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                        df = df.dropna(subset=['date']).sort_values('date')
+                    # Use last 250 rows for indicators
+                    tail = df.tail(250) if len(df) > 250 else df
+                    last = tail.iloc[-1]
+                    prev = tail.iloc[-2] if len(tail) > 1 else None
+                    price = float(last.get('close', last.get('adj_close', math.nan)))
+                    if math.isnan(price):
+                        continue
+                    volume = int(last.get('volume', 0) or 0)
+                    prev_close = float(prev.get('close')) if prev is not None and 'close' in tail.columns else price
+                    change = price - prev_close
+                    change_pct = (change / prev_close * 100) if prev_close else 0.0
+                    # RSI (14)
+                    rsi_val = 50.0
+                    try:
+                        if ta is not None and 'close' in tail.columns:
+                            rsi_series = ta.rsi(tail['close'], length=14)
+                            if rsi_series is not None and len(rsi_series.dropna()) > 0:
+                                rsi_val = float(rsi_series.iloc[-1])
+                    except Exception:
+                        pass
+                    # SMAs
+                    sma20_ok = sma50_ok = sma200_ok = True
+                    try:
+                        close = tail['close']
+                        sma20 = close.rolling(20).mean().iloc[-1]
+                        sma50 = close.rolling(50).mean().iloc[-1]
+                        sma200 = close.rolling(200).mean().iloc[-1]
+                        sma20_ok = (not above_sma20) or (price >= float(sma20 or price))
+                        sma50_ok = (not above_sma50) or (price >= float(sma50 or price))
+                        sma200_ok = (not above_sma200) or (price >= float(sma200 or price))
+                    except Exception:
+                        sma20_ok = (not above_sma20)
+                        sma50_ok = (not above_sma50)
+                        sma200_ok = (not above_sma200)
+
+                    # filters
+                    if not (min_price <= price <= max_price):
+                        pass
+                    elif not (min_volume <= volume):
+                        pass
+                    elif not (min_change <= change_pct <= max_change):
+                        pass
+                    elif not (min_rsi <= rsi_val <= max_rsi):
+                        pass
+                    elif not (sma20_ok and sma50_ok and sma200_ok):
+                        pass
+                    else:
+                        symbol = fp.stem.upper()
+                        result = {
+                            'symbol': symbol,
+                            'price': price,
+                            'change_pct': change_pct,
+                            'volume': volume,
+                            'rsi': rsi_val,
+                            'pe_ratio': float('nan'),
+                            'market_cap': float('nan'),
+                            'score': float(rsi_val / 100.0 * 10.0),
+                        }
+                        results.append(result)
+                    processed += 1
+                except Exception as ie:
+                    errors += 1
+                    self.logger.warning(f"Scan read error for {fp.name}: {ie}")
+                # progress
+                if idx % 10 == 0 or idx == total:
+                    prog = int(idx / total * 100)
+                    self.progress_updated.emit(prog)
+                    self.status_updated.emit(f"Scanning… {idx}/{total} | processed={processed} errors={errors}")
+
             if self.is_scanning:
-                # Return empty results - real implementation would return filtered stocks
                 self.results_updated.emit(results)
-                self.scan_completed.emit(0)
-            
+                self.scan_completed.emit(len(results))
+                self.status_updated.emit(f"Scan complete: {len(results)} matches | processed={processed} errors={errors}")
+
         except Exception as e:
             self.error_occurred.emit(str(e))
         finally:
@@ -439,6 +525,15 @@ class ScanResultsTable(QTableWidget):
 
 
 class ScannerWidget(QWidget):
+    def on_ml_toggle(self, state):
+        self.use_ml_preds = bool(state)
+        self.ml_run_combo.setEnabled(self.use_ml_preds)
+
+    def on_ml_run_selected(self, idx):
+        if 0 <= idx < len(self.available_ml_preds):
+            self.selected_ml_pred = self.available_ml_preds[idx]
+        else:
+            self.selected_ml_pred = None
     """Main scanner widget"""
     
     add_to_watchlist = pyqtSignal(str)
@@ -457,6 +552,7 @@ class ScannerWidget(QWidget):
         self.scanner_worker.progress_updated.connect(self.update_progress)
         self.scanner_worker.results_updated.connect(self.update_results)
         self.scanner_worker.scan_completed.connect(self.on_scan_completed)
+        self.scanner_worker.status_updated.connect(self.on_status_updated)
         self.scanner_worker.error_occurred.connect(self.on_scan_error)
         self.scanner_thread.start()
         
@@ -470,69 +566,88 @@ class ScannerWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
-        # Title and controls
         title_layout = QHBoxLayout()
-        
+
         title = QLabel("Stock Scanner")
         title_font = QFont()
         title_font.setPointSize(18)
         title_font.setBold(True)
         title.setFont(title_font)
         title_layout.addWidget(title)
-        
         title_layout.addStretch()
-        
+
+        # ML predictions toggle
+        self.use_ml_checkbox = QCheckBox("Use ML predictions")
+        self.use_ml_checkbox.setChecked(False)
+        self.use_ml_checkbox.stateChanged.connect(self.on_ml_toggle)
+        title_layout.addWidget(self.use_ml_checkbox)
+
+        # ML run selector
+        self.ml_run_combo = QComboBox()
+        self.ml_run_combo.setMinimumWidth(180)
+        self.ml_run_combo.setEnabled(False)
+        self.ml_run_combo.currentIndexChanged.connect(self.on_ml_run_selected)
+        title_layout.addWidget(self.ml_run_combo)
+
+        # Internal state for ML integration
+        self.available_ml_preds = []
+        self.selected_ml_pred = None
+        self.use_ml_preds = False
+
         # Scan button
         self.scan_button = QPushButton("🔍 Start Scan")
         self.scan_button.clicked.connect(self.start_scan)
         title_layout.addWidget(self.scan_button)
-        
+
         self.stop_button = QPushButton("⏹️ Stop Scan")
         self.stop_button.clicked.connect(self.stop_scan)
         self.stop_button.setEnabled(False)
         title_layout.addWidget(self.stop_button)
-        
+
         layout.addLayout(title_layout)
-        
+
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
-        
+
         # Status label
         self.status_label = QLabel("Ready to scan")
         layout.addWidget(self.status_label)
-        
+
         # Create splitter for criteria and results
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        
+
         # Scan criteria
         self.criteria_widget = ScanCriteriaWidget()
         self.criteria_widget.setMaximumWidth(400)
         splitter.addWidget(self.criteria_widget)
-        
+
         # Results table
         results_frame = QFrame()
         results_frame.setFrameStyle(QFrame.Shape.Box)
         results_layout = QVBoxLayout(results_frame)
-        
+
         results_title = QLabel("Scan Results")
         results_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         results_layout.addWidget(results_title)
-        
+
         self.results_table = ScanResultsTable()
         self.results_table.symbol_selected.connect(self.on_symbol_selected)
         self.results_table.add_to_watchlist.connect(self.add_to_watchlist.emit)
         results_layout.addWidget(self.results_table)
-        
+
         splitter.addWidget(results_frame)
-        
+
         # Set splitter proportions
         splitter.setStretchFactor(0, 1)  # Criteria
         splitter.setStretchFactor(1, 2)  # Results
-        
+
         layout.addWidget(splitter)
+
+    def on_status_updated(self, msg: str):
+        """Update status text from worker"""
+        self.status_label.setText(msg)
     
     def start_scan(self):
         """Start stock scan"""
@@ -578,8 +693,8 @@ class ScannerWidget(QWidget):
     def on_scan_completed(self, count: int):
         """Handle scan completion"""
         self.reset_scan_ui()
-        self.status_label.setText(f"Scan completed - Connect to data source for real scanning")
-        self.logger.info(f"Scan completed - ready for real data integration")
+        self.status_label.setText(f"Scan completed: {count} matches")
+        self.logger.info(f"Scan completed: {count} matches")
     
     def on_scan_error(self, error: str):
         """Handle scan error"""
@@ -604,12 +719,19 @@ class ScannerWidget(QWidget):
     def closeEvent(self, event):
         """Handle widget close"""
         # Stop scan if running
-        if self.stop_button.isEnabled():
-            self.stop_scan()
-        
+        try:
+            if hasattr(self, 'stop_button') and self.stop_button.isEnabled():
+                self.stop_scan()
+        except Exception:
+            pass
         # Stop worker thread
-        if hasattr(self, 'scanner_thread'):
-            self.scanner_thread.quit()
-            self.scanner_thread.wait()
-        
+        try:
+            if hasattr(self, 'scanner_thread'):
+                # signal worker to stop
+                if hasattr(self, 'scanner_worker'):
+                    self.scanner_worker.stop_scan()
+                self.scanner_thread.quit()
+                self.scanner_thread.wait()
+        except Exception:
+            pass
         event.accept()

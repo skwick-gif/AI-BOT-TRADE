@@ -739,28 +739,6 @@ class MLWidget(QWidget):
         def _on_window_changed(text: str):
             self.lookback_spin.setEnabled(text == "rolling")
         self.window_combo.currentTextChanged.connect(_on_window_changed)
-
-        # Model selector
-        pipe_layout.addWidget(QLabel("Models:"))
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
-        # Provide a default list; allow typing comma-separated custom list
-        self.model_combo.addItems([
-            "LogisticRegression,RandomForest",
-            "LogisticRegression",
-            "RandomForest",
-            "Ridge"  # only used if regression target type is selected later
-        ])
-        self.model_combo.setCurrentText("LogisticRegression,RandomForest")
-        pipe_layout.addWidget(self.model_combo)
-
-        pipe_layout.addStretch()
-
-        self.run_pipeline_btn = QPushButton("🏃 Run ML Pipeline")
-        self.run_pipeline_btn.clicked.connect(self.start_pipeline_run)
-        pipe_layout.addWidget(self.run_pipeline_btn)
-
-        layout.addWidget(pipeline_frame)
     
     def start_training(self):
         """Start model training"""
@@ -802,6 +780,8 @@ class MLWidget(QWidget):
             if not tickers:
                 # Leave tickers empty so worker loads all available bronze Parquet files
                 self.performance_widget.add_log_entry("No symbols entered; running on all available symbols in data/bronze/daily")
+            else:
+                self.performance_widget.add_log_entry(f"Running on {len(tickers)} tickers: {', '.join(tickers[:10])}{'...' if len(tickers)>10 else ''}")
 
             # Parse model selection
             models_text = self.model_combo.currentText().strip()
@@ -825,6 +805,7 @@ class MLWidget(QWidget):
 
             # Trigger worker in its own thread via signal
             self.pipeline_worker.run_requested.emit(params)
+            self.performance_widget.add_log_entry(f"Pipeline params: {params}")
             self.logger.info(f"ML pipeline started with params: {params}")
 
         except Exception as e:

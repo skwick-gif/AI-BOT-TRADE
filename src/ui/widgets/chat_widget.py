@@ -941,8 +941,11 @@ class ChatWidget(QWidget):
     
     def closeEvent(self, event):
         """Handle widget close"""
-        # Stop AI worker thread
-        if hasattr(self, 'ai_thread'):
-            self.ai_thread.quit()
-            self.ai_thread.wait()
+        # Stop AI worker thread safely
+        try:
+            if hasattr(self, 'ai_thread') and self.ai_thread.isRunning():
+                self.ai_thread.quit()
+                self.ai_thread.wait()
+        except Exception:
+            pass
         event.accept()

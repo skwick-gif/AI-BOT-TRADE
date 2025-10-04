@@ -290,3 +290,23 @@ class MacroWidget(QWidget):
         
         # Show demo data on error
         self.show_demo_data()
+
+    def closeEvent(self, event):
+        """Ensure timers and threads are stopped when the widget closes."""
+        try:
+            # Stop auto refresh timer
+            if hasattr(self, 'refresh_timer'):
+                self.refresh_timer.stop()
+                self.refresh_timer.deleteLater()
+            # Stop in-flight data thread if running
+            if hasattr(self, 'data_thread') and isinstance(getattr(self, 'data_thread', None), QThread):
+                try:
+                    if self.data_thread.isRunning():
+                        # For QThread subclass, request interruption and quit
+                        self.data_thread.requestInterruption()
+                        self.data_thread.quit()
+                        self.data_thread.wait()
+                except Exception:
+                    pass
+        finally:
+            event.accept()

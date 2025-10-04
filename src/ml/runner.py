@@ -156,40 +156,42 @@ def walk_forward_run(
 
             per_model_scores: List[Tuple[str, float, Any]] = []  # (name, score, y_hat)
             for name, pipe in pipes.items():
-                X_train = t_train[num_cols + cat_cols]
-                y_train = t_train[y_col]
-                X_test = t_test[num_cols + cat_cols]
-                y_test = t_test[y_col]
+                    X_train = t_train[num_cols + cat_cols]
+                    y_train = t_train[y_col]
+                    X_test = t_test[num_cols + cat_cols]
+                    y_test = t_test[y_col]
 
-                # For classification, ensure y is str categories
-                if cfg.target.type == "classification":
-                    y_train = y_train.astype(str)
-                    y_test = y_test.astype(str)
-                pipe.fit(X_train, y_train)
-                y_hat = pipe.predict(X_test)
-                score = score_fn(y_test, y_hat)
-                per_model_scores.append((name, float(score), y_hat))
-                if cfg.target.type == "classification":
-                    if score > best_score:
-                        best_score, best_name, best_pred = score, name, y_hat
-                else:
-                    if score < best_score:
-                        best_score, best_name, best_pred = score, name, y_hat
+                    # For classification, ensure y is str categories
+                    if cfg.target.type == "classification":
+                        y_train = y_train.astype(str)
+                        y_test = y_test.astype(str)
+                    pipe.fit(X_train, y_train)
+                    y_hat = pipe.predict(X_test)
+                    score = score_fn(y_test, y_hat)
+                    per_model_scores.append((name, float(score), y_hat))
+                    if cfg.target.type == "classification":
+                        if score > best_score:
+                            best_score, best_name, best_pred = score, name, y_hat
+                    else:
+                        if score < best_score:
+                            best_score, best_name, best_pred = score, name, y_hat
+                    print(f"[ML] Horizon {h}: train rows with label={len(t_train)}, test rows with label={len(t_test)}")
+            print(f"[ML] Split as_of={cur.date()}: train rows={len(train_df)}, test rows={len(test_df)}")
 
             if best_name is None:
                 continue
 
             # record per-model scores
             for mname, mscore, _yh in per_model_scores:
-                model_score_rows.append({
-                    "as_of": pd.Timestamp(cur),
-                    "horizon": h,
-                    "model": mname,
-                    "metric_name": metric_name,
-                    "metric": float(mscore),
-                    "n_train": len(t_train),
-                    "n_test": len(t_test),
-                })
+                    model_score_rows.append({
+                        "as_of": pd.Timestamp(cur),
+                        "horizon": h,
+                        "model": mname,
+                        "metric_name": metric_name,
+                        "metric": float(mscore),
+                        "n_train": len(t_train),
+                        "n_test": len(t_test),
+                    })
 
             results.append(StepResult(
                 as_of=pd.Timestamp(cur),

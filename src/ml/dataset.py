@@ -33,6 +33,9 @@ def load_bronze(dir_path: Path | str = BRONZE_DIR_DEFAULT, tickers: Optional[Ite
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
             df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
         out[t] = df
+    print(f"[ML] Loaded {len(out)} tickers from {p}.")
+    for k, v in out.items():
+        print(f"[ML] Ticker {k}: {len(v)} rows.")
     return out
 
 

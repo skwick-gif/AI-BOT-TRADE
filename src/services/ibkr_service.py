@@ -83,6 +83,15 @@ class IBKRService:
                     continue
                 tried_ports.append(port)
                 try:
+                    # Preflight: quick TCP port check to surface config/env problems faster
+                    if not self._is_port_open(self.config.host, port, timeout=1.0):
+                        msg = (
+                            f"Port {port} on {self.config.host} is closed. Ensure TWS/IB Gateway is running, "
+                            f"API is enabled (Global Configuration > API > Settings), and Windows Firewall allows inbound on {port}."
+                        )
+                        self.logger.warning(msg)
+                        self.last_error = msg
+                        continue
                     self.logger.info(f"Connecting to IBKR at {self.config.host}:{port} (clientId={self.config.client_id})")
                     # Connect to IB Gateway or TWS
                     self.ib.connect(
@@ -113,6 +122,12 @@ class IBKRService:
                     msg = str(e).strip() if str(e) else ""
                     if not msg:
                         msg = f"{type(e).__name__}"
+                    # Improve guidance for common Windows error code 1225
+                    if "1225" in msg or "refused" in msg.lower():
+                        msg = (
+                            f"{msg} — The remote computer refused the connection. "
+                            f"Start TWS/IBG and enable API; verify port {port} is open and not blocked by firewall."
+                        )
                     self.last_error = msg
                     self.logger.warning(f"Connect attempt failed on port {port}: {msg}")
                     self._connected = False
