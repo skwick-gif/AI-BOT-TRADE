@@ -1,0 +1,17 @@
+streamlit
+pandas
+pandas-ta
+ib_insync
+python-dotenv
+requests
+openai
+yfinance
+plotly
+pytrends
+vectorbt
+fredapi
+praw
+nest-asyncio
+numpy
+matplotlib
+aiohttp
