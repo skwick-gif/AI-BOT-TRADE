@@ -10,8 +10,11 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QSplitter, QFrame, QPlainTextEdit, QDialog,
     QTabWidget, QFormLayout, QListWidget, QListWidgetItem, QMessageBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
+import random
+from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
 from core.ai_trading_config import AiTradingConfigManager, Strategy, AssetEntry
 
 
@@ -117,6 +120,14 @@ class AiTradingWidget(QWidget):
         self._cfg = AiTradingConfigManager()  # persistent config
         self._global_interval = self._cfg.config.globals.interval
         self._paper_mode = (self._cfg.config.globals.mode == "Paper")
+        # runtime state
+        self._timers = {}  # symbol -> QTimer
+        self._asset_rows = {}  # symbol -> row index
+        self._rt_state = {}  # symbol -> { 'last_signal': str, 'h_count': int, 'cooldown_until': datetime|None }
+        # daily guardrails state (skeleton)
+        self._daily_date = date.today()
+        self._daily_trade_count = 0
+        self._daily_pnl = 0.0  # placeholder until IBKR/exec wiring
 
         self._build_ui()
         self._load_from_config()
@@ -183,10 +194,11 @@ class AiTradingWidget(QWidget):
         top.addWidget(self._settings_btn)
 
         self._start_all_btn = QPushButton("Start All")
-        self._start_all_btn.clicked.connect(self.start_all_requested.emit)
+        # Wire local start; can also emit outward if needed
+        self._start_all_btn.clicked.connect(self._start_all)
         top.addWidget(self._start_all_btn)
         self._stop_all_btn = QPushButton("Stop All")
-        self._stop_all_btn.clicked.connect(self.stop_all_requested.emit)
+        self._stop_all_btn.clicked.connect(self._stop_all)
         top.addWidget(self._stop_all_btn)
 
         root.addLayout(top)
@@ -300,6 +312,7 @@ class AiTradingWidget(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setSortingEnabled(False)
         table_layout.addWidget(self._table)
 
         split.addWidget(table_frame)
@@ -310,7 +323,8 @@ class AiTradingWidget(QWidget):
         right_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         right_layout.addWidget(right_title)
 
-        right_layout.addWidget(QLabel("Score: —    Action: —    Confidence: —"))
+        self._summary_label = QLabel("Score: —    Action: —    Confidence: —")
+        right_layout.addWidget(self._summary_label)
         right_layout.addWidget(QLabel("Reason:"))
         self._reason = QPlainTextEdit(); self._reason.setReadOnly(True); self._reason.setPlaceholderText("Decision rationale will appear here…")
         right_layout.addWidget(self._reason)
@@ -333,12 +347,14 @@ class AiTradingWidget(QWidget):
         assets_layout.addWidget(split)
 
         self._tabs.addTab(assets_tab, "Assets")
+        # selection updates right panel
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
     # --- Strategies tab ---
         strat_tab = QWidget(); strat_layout = QHBoxLayout(strat_tab)
         self._strat_list = QListWidget(); self._strat_list.itemClicked.connect(self._on_strat_selected)
         strat_layout.addWidget(self._strat_list, 1)
-    # editor form
+        # editor form
         strat_form = QFormLayout()
         self._s_name = QLineEdit(); self._s_buy = QDoubleSpinBox(); self._s_buy.setRange(0,10); self._s_buy.setSingleStep(0.1)
         self._s_sell = QDoubleSpinBox(); self._s_sell.setRange(0,10); self._s_sell.setSingleStep(0.1)
@@ -355,7 +371,7 @@ class AiTradingWidget(QWidget):
         strat_form.addRow("Stop-Loss %", self._s_sl)
         strat_form.addRow("Take-Profit %", self._s_tp)
         strat_form.addRow("Interval", self._s_int)
-    # actions
+        # actions
         strat_btns = QHBoxLayout()
         self._s_save = QPushButton("Save/Update"); self._s_save.clicked.connect(self._save_strategy)
         self._s_delete = QPushButton("Delete"); self._s_delete.clicked.connect(self._delete_strategy)
@@ -370,9 +386,14 @@ class AiTradingWidget(QWidget):
         self._set_mode.setCurrentText("Paper" if self._paper_mode else "Live")
         self._set_interval = QComboBox(); self._set_interval.addItems(["1m","2m","5m","15m","60m"]); self._set_interval.setCurrentText(self._global_interval)
         self._set_hours = QCheckBox("Trading hours only"); self._set_hours.setChecked(self._cfg.config.globals.trading_hours_only)
+        # Safety
+        self._set_daily_loss = QDoubleSpinBox(); self._set_daily_loss.setPrefix("$"); self._set_daily_loss.setRange(0, 1_000_000); self._set_daily_loss.setValue(self._cfg.config.globals.daily_loss_limit)
+        self._set_max_trades = QSpinBox(); self._set_max_trades.setRange(0, 1000); self._set_max_trades.setValue(self._cfg.config.globals.max_trades_day)
         st_layout.addRow("Mode", self._set_mode)
         st_layout.addRow("Global Interval", self._set_interval)
         st_layout.addRow(self._set_hours)
+        st_layout.addRow("Daily loss limit", self._set_daily_loss)
+        st_layout.addRow("Max trades / day", self._set_max_trades)
         self._save_settings_btn = QPushButton("Save Settings"); self._save_settings_btn.clicked.connect(self._save_settings)
         st_btn_row = QHBoxLayout(); st_btn_row.addStretch(); st_btn_row.addWidget(self._save_settings_btn)
         settings_v = QVBoxLayout(settings_tab)
@@ -417,8 +438,11 @@ class AiTradingWidget(QWidget):
         # update table UI
         row = self._table.rowCount()
         self._table.insertRow(row)
-        # On (placeholder text “Off”)
-        self._table.setItem(row, 0, QTableWidgetItem("Off"))
+        # On/Off checkbox
+        on_chk = QCheckBox()
+        on_chk.setChecked(False)
+        on_chk.toggled.connect(lambda checked, sym=symbol: self._on_asset_enabled_changed(sym, checked))
+        self._table.setCellWidget(row, 0, on_chk)
         self._table.setItem(row, 1, QTableWidgetItem(symbol))
         self._table.setItem(row, 2, QTableWidgetItem(profile))
         self._table.setItem(row, 3, QTableWidgetItem(str(qty)))
@@ -436,6 +460,8 @@ class AiTradingWidget(QWidget):
 
         # Clear inputs for next add
         self._symbol_edit.clear()
+        # track row mapping for new asset
+        self._asset_rows[symbol.upper()] = row
 
     # ---- Config wiring helpers ----
     def _load_from_config(self):
@@ -447,7 +473,10 @@ class AiTradingWidget(QWidget):
         self._table.setRowCount(0)
         for a in self._cfg.config.assets:
             row = self._table.rowCount(); self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem("On" if a.enabled else "Off"))
+            # On/Off checkbox
+            on_chk = QCheckBox(); on_chk.setChecked(a.enabled)
+            on_chk.toggled.connect(lambda checked, sym=a.symbol: self._on_asset_enabled_changed(sym, checked))
+            self._table.setCellWidget(row, 0, on_chk)
             self._table.setItem(row, 1, QTableWidgetItem(a.symbol))
             self._table.setItem(row, 2, QTableWidgetItem(a.strategy))
             self._table.setItem(row, 3, QTableWidgetItem(str(a.quantity)))
@@ -459,6 +488,11 @@ class AiTradingWidget(QWidget):
             pause = QPushButton("Pause"); close = QPushButton("Close")
             h.addWidget(pause); h.addWidget(close)
             self._table.setCellWidget(row, 7, action_frame)
+            # track row mapping
+            self._asset_rows[a.symbol.upper()] = row
+            # start timers for enabled assets
+            if a.enabled:
+                self._start_timer_for_asset(a)
         # strategies list
         self._refresh_strategy_list()
 
@@ -471,6 +505,279 @@ class AiTradingWidget(QWidget):
         self._strat_list.clear()
         for name in sorted(self._cfg.list_strategies()):
             QListWidgetItem(name, self._strat_list)
+
+    # ---- Runtime helpers ----
+    def _interval_to_ms(self, interval: str) -> int:
+        try:
+            val = int(interval.replace("m", ""))
+            return max(1, val) * 60_000
+        except Exception:
+            return 60_000
+
+    def _find_asset(self, symbol: str) -> AssetEntry | None:
+        for a in self._cfg.config.assets:
+            if a.symbol.upper() == symbol.upper():
+                return a
+        return None
+
+    def _get_strategy_for_asset(self, asset: AssetEntry) -> Strategy:
+        s = self._cfg.get_strategy(asset.strategy)
+        if s:
+            return s
+        return Strategy(
+            name=asset.strategy or "Intraday",
+            buy_threshold=8.0,
+            sell_threshold=4.0,
+            hysteresis=2,
+            cooldown_min=3,
+            sl_pct=3.0,
+            tp_pct=6.0,
+            interval="1m",
+        )
+
+    def _ensure_state(self, symbol: str) -> dict:
+        sym = symbol.upper()
+        st = self._rt_state.get(sym)
+        if not st:
+            st = {"last_signal": "HOLD", "h_count": 0, "cooldown_until": None}
+            self._rt_state[sym] = st
+        return st
+
+    def _row_for_symbol(self, symbol: str) -> int:
+        return self._asset_rows.get(symbol.upper(), -1)
+
+    def _set_status(self, symbol: str, text: str):
+        row = self._row_for_symbol(symbol)
+        if row >= 0:
+            self._table.setItem(row, 6, QTableWidgetItem(text))
+
+    def _on_asset_enabled_changed(self, symbol: str, enabled: bool):
+        a = self._find_asset(symbol)
+        if not a:
+            return
+        a.enabled = enabled
+        self._cfg.save()
+        if enabled:
+            self._start_timer_for_asset(a)
+            self._set_status(symbol, "Scheduled")
+            # run an immediate evaluation so the user sees feedback right away
+            self._evaluate_asset(symbol)
+        else:
+            self._stop_timer_for_asset(symbol)
+            self._set_status(symbol, "Stopped")
+
+    def _start_timer_for_asset(self, asset: AssetEntry):
+        sym = asset.symbol.upper()
+        # stop existing first
+        self._stop_timer_for_asset(sym)
+        # choose interval
+        interval = self._cfg.config.globals.interval if asset.use_global_interval else asset.custom_interval
+        ms = self._interval_to_ms(interval)
+        t = QTimer(self)
+        t.setInterval(ms)
+        t.timeout.connect(lambda s=sym: self._evaluate_asset(s))
+        t.start()
+        self._timers[sym] = t
+
+    def _stop_timer_for_asset(self, symbol: str):
+        sym = symbol.upper()
+        t = self._timers.pop(sym, None)
+        if t:
+            t.stop()
+            t.deleteLater()
+
+    def _evaluate_asset(self, symbol: str):
+        # trading hours gating
+        if self._cfg.config.globals.trading_hours_only and not self._is_trading_hours():
+            self._set_status(symbol, "Off-hours")
+            return
+        self._reset_daily_counters_if_new_day()
+        asset = self._find_asset(symbol)
+        if not asset:
+            return
+        strat = self._get_strategy_for_asset(asset)
+        # demo score; replace later with real AI signal
+        score = round(random.uniform(0, 10), 2)
+        signal = "BUY" if score >= float(strat.buy_threshold) else ("SELL" if score <= float(strat.sell_threshold) else "HOLD")
+
+        # cooldown
+        st = self._ensure_state(symbol)
+        now = datetime.now()
+        if st.get("cooldown_until") and now < st["cooldown_until"]:
+            self._set_status(symbol, "Cooldown")
+            self._update_score_and_panel(symbol, score, "COOLDOWN")
+            self._append_log(f"[{symbol}] cooldown active, signal={signal}, score={score}")
+            return
+
+        # hysteresis cycles
+        if signal == st.get("last_signal") and signal != "HOLD":
+            st["h_count"] = st.get("h_count", 0) + 1
+        else:
+            st["h_count"] = 1 if signal != "HOLD" else 0
+            st["last_signal"] = signal
+
+        needed = max(1, int(strat.hysteresis))
+        if signal == "HOLD":
+            self._set_status(symbol, "HOLD")
+            self._update_score_and_panel(symbol, score, "HOLD")
+            self._append_log(f"[{symbol}] hold score={score}")
+            return
+
+        if st["h_count"] >= needed:
+            decision = signal
+            # guardrails: max trades/day
+            max_trades = int(self._cfg.config.globals.max_trades_day or 0)
+            if max_trades > 0 and self._daily_trade_count >= max_trades:
+                self._set_status(symbol, "Max trades/day reached")
+                self._update_score_and_panel(symbol, score, "GUARDRAIL: MAX-TRADES")
+                self._append_log(f"[{symbol}] blocked by guardrail: max trades/day ({max_trades})")
+                return
+            # guardrails: daily loss limit (placeholder until real PnL)
+            loss_limit = float(self._cfg.config.globals.daily_loss_limit or 0.0)
+            if loss_limit > 0 and (-self._daily_pnl) >= loss_limit:
+                self._set_status(symbol, "Daily loss limit reached")
+                self._update_score_and_panel(symbol, score, "GUARDRAIL: LOSS-LIMIT")
+                self._append_log(f"[{symbol}] blocked by guardrail: daily loss limit (${loss_limit:.2f})")
+                return
+            st["h_count"] = 0
+            st["last_signal"] = signal
+            st["cooldown_until"] = now + timedelta(minutes=max(0, int(strat.cooldown_min)))
+            # increment daily counter (placeholder execution)
+            self._daily_trade_count += 1
+            self._set_status(symbol, decision)
+            self._update_score_and_panel(symbol, score, decision)
+            self._append_log(f"[{symbol}] decision={decision} score={score} (cooldown {strat.cooldown_min}m)")
+        else:
+            phase = f"{signal} ({st['h_count']}/{needed})"
+            self._set_status(symbol, phase)
+            self._update_score_and_panel(symbol, score, phase)
+            self._append_log(f"[{symbol}] building {phase} score={score}")
+
+    def _reset_daily_counters_if_new_day(self):
+        today = date.today()
+        if self._daily_date != today:
+            self._daily_date = today
+            self._daily_trade_count = 0
+            self._daily_pnl = 0.0
+            self._append_log("Daily counters reset")
+
+    def _update_score_and_panel(self, symbol: str, score: float, status_text: str):
+        row = self._row_for_symbol(symbol)
+        if row >= 0:
+            self._table.setItem(row, 5, QTableWidgetItem(str(score)))
+            self._table.setItem(row, 6, QTableWidgetItem(status_text))
+        sel = self._table.currentRow()
+        if sel == row and hasattr(self, "_summary_label"):
+            self._summary_label.setText(f"Score: {score}    Action: {status_text}    Confidence: —")
+            if hasattr(self, "_reason"):
+                a = self._find_asset(symbol)
+                sname = a.strategy if a else "?"
+                self._reason.setPlainText(f"Strategy: {sname}\nScore={score}\nState={status_text}\nNote: demo scoring; thresholds/hysteresis/cooldown applied")
+
+    def _on_selection_changed(self):
+        row = self._table.currentRow()
+        if row < 0:
+            return
+        symbol_item = self._table.item(row, 1)
+        score_item = self._table.item(row, 5)
+        status_item = self._table.item(row, 6)
+        sym = symbol_item.text() if symbol_item else "—"
+        score = score_item.text() if score_item else "—"
+        status = status_item.text() if status_item else "—"
+        if hasattr(self, "_summary_label"):
+            self._summary_label.setText(f"Score: {score}    Action: {status}    Confidence: —")
+        if hasattr(self, "_reason"):
+            self._reason.setPlainText(f"Selected {sym}. Latest status: {status}, score: {score}.")
+
+    def _append_log(self, text: str):
+        try:
+            self._log.appendPlainText(text)
+        except Exception:
+            pass
+
+    def _start_all(self):
+        # If a symbol is typed but not added, add it automatically for convenience
+        pending_sym = self._symbol_edit.text().strip().upper()
+        if pending_sym and not self._find_asset(pending_sym):
+            self._append_log(f"Adding pending symbol '{pending_sym}' before start")
+            self._on_add_asset()
+
+        # Enable and start timers for all assets, then evaluate once immediately
+        for a in self._cfg.config.assets:
+            sym = a.symbol
+            # ensure UI checkbox is checked
+            row = self._row_for_symbol(sym)
+            if row >= 0:
+                w = self._table.cellWidget(row, 0)
+                if isinstance(w, QCheckBox) and not w.isChecked():
+                    w.setChecked(True)
+            # set enabled in config if needed
+            if not a.enabled:
+                a.enabled = True
+            # start timer and evaluate immediately
+            self._start_timer_for_asset(a)
+            self._set_status(sym, "Scheduled")
+            self._evaluate_asset(sym)
+        self._cfg.save()
+        if not self._cfg.config.assets:
+            self._append_log("No assets to start. Add symbols via the Add button.")
+        else:
+            self._append_log("Started all assets")
+
+    def _stop_all(self):
+        for sym in list(self._timers.keys()):
+            self._stop_timer_for_asset(sym)
+            self._set_status(sym, "Stopped")
+        self._append_log("Stopped all assets")
+
+    def _is_trading_hours(self) -> bool:
+        try:
+            now = datetime.now(ZoneInfo("US/Eastern"))
+            # Mon-Fri 9:30-16:00 ET
+            if now.weekday() >= 5:
+                return False
+            start = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            end = now.replace(hour=16, minute=0, second=0, microsecond=0)
+            return start <= now <= end
+        except Exception:
+            # fallback: always true if timezone not available
+            return True
+
+    def _pause_asset(self, symbol: str):
+        a = self._find_asset(symbol)
+        if not a:
+            return
+        # uncheck checkbox and disable
+        row = self._row_for_symbol(symbol)
+        if row >= 0:
+            w = self._table.cellWidget(row, 0)
+            if isinstance(w, QCheckBox):
+                w.setChecked(False)
+        self._on_asset_enabled_changed(symbol, False)
+        self._append_log(f"Paused {symbol}")
+
+    def _close_asset(self, symbol: str):
+        # stop timer and remove from config and table
+        self._stop_timer_for_asset(symbol)
+        self._cfg.remove_asset(symbol)
+        row = self._row_for_symbol(symbol)
+        if row >= 0:
+            self._table.removeRow(row)
+            self._rebuild_row_mapping()
+        self._append_log(f"Removed {symbol}")
+
+    def _rebuild_row_mapping(self):
+        self._asset_rows.clear()
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 1)
+            if item:
+                self._asset_rows[item.text().upper()] = r
+
+    def closeEvent(self, event):
+        # ensure timers are stopped on close
+        for sym in list(self._timers.keys()):
+            self._stop_timer_for_asset(sym)
+        super().closeEvent(event)
 
     def _on_strat_selected(self, item: QListWidgetItem):
         name = item.text()
@@ -517,6 +824,8 @@ class AiTradingWidget(QWidget):
             mode=self._set_mode.currentText(),
             interval=self._set_interval.currentText(),
             trading_hours_only=self._set_hours.isChecked(),
+            daily_loss_limit=self._set_daily_loss.value(),
+            max_trades_day=self._set_max_trades.value(),
         )
         # reflect in top bar too
         self._mode_combo.setCurrentText(self._cfg.config.globals.mode)

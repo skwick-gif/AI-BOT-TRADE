@@ -38,6 +38,8 @@ class GlobalSettings:
     trading_hours_only: bool = True
     mode: str = "Paper"  # Paper/Live
     interval: str = "1m"
+    daily_loss_limit: float = 0.0
+    max_trades_day: int = 0
 
 
 @dataclass
@@ -79,6 +81,8 @@ class AiTradingConfigManager:
             trading_hours_only=bool(g.get("trading_hours_only", True)),
             mode=str(g.get("mode", "Paper")),
             interval=str(g.get("interval", "1m")),
+            daily_loss_limit=float(g.get("daily_loss_limit", 0.0)),
+            max_trades_day=int(g.get("max_trades_day", 0)),
         )
         strategies_dict = {}
         for name, s in (data.get("strategies", {}) or {}).items():
@@ -160,11 +164,15 @@ class AiTradingConfigManager:
                 break
         self.save()
 
-    def update_globals(self, *, trading_hours_only: Optional[bool] = None, mode: Optional[str] = None, interval: Optional[str] = None) -> None:
+    def update_globals(self, *, trading_hours_only: Optional[bool] = None, mode: Optional[str] = None, interval: Optional[str] = None, daily_loss_limit: Optional[float] = None, max_trades_day: Optional[int] = None) -> None:
         if trading_hours_only is not None:
             self.config.globals.trading_hours_only = bool(trading_hours_only)
         if mode is not None:
             self.config.globals.mode = str(mode)
         if interval is not None:
             self.config.globals.interval = str(interval)
+        if daily_loss_limit is not None:
+            self.config.globals.daily_loss_limit = float(daily_loss_limit)
+        if max_trades_day is not None:
+            self.config.globals.max_trades_day = int(max_trades_day)
         self.save()
