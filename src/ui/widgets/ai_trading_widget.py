@@ -8,10 +8,11 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QGroupBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QFrame, QPlainTextEdit, QDialog,
-    QTabWidget, QFormLayout
+    QTabWidget, QFormLayout, QListWidget, QListWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+from core.ai_trading_config import AiTradingConfigManager, Strategy, AssetEntry
 
 
 class AutomationSettingsDialog(QDialog):
@@ -113,10 +114,12 @@ class AiTradingWidget(QWidget):
         super().__init__()
         self._ibkr_connected = False
         self._api_ok = False
-        self._global_interval = "1m"
-        self._paper_mode = True
+        self._cfg = AiTradingConfigManager()  # persistent config
+        self._global_interval = self._cfg.config.globals.interval
+        self._paper_mode = (self._cfg.config.globals.mode == "Paper")
 
         self._build_ui()
+        self._load_from_config()
 
     # ---- Public hooks for future wiring ----
     def set_ibkr_service(self, service):
@@ -172,7 +175,7 @@ class AiTradingWidget(QWidget):
         top.addWidget(self._global_interval_combo)
 
         self._hours_only = QCheckBox("Trading hours only")
-        self._hours_only.setChecked(True)
+        self._hours_only.setChecked(self._cfg.config.globals.trading_hours_only)
         top.addWidget(self._hours_only)
 
         self._settings_btn = QPushButton("Settings ⚙")
@@ -188,7 +191,12 @@ class AiTradingWidget(QWidget):
 
         root.addLayout(top)
 
-        # Add Asset group
+        # Tabbed area: Assets / Strategies / Settings / Logs
+        self._tabs = QTabWidget()
+        root.addWidget(self._tabs)
+
+    # --- Assets tab ---
+        assets_tab = QWidget(); assets_layout = QVBoxLayout(assets_tab)
         add_group = QGroupBox("Add Asset")
         add_layout = QVBoxLayout(add_group)
 
@@ -264,8 +272,7 @@ class AiTradingWidget(QWidget):
         self._add_btn.clicked.connect(self._on_add_asset)
         add_btn_row.addWidget(self._add_btn)
         add_layout.addLayout(add_btn_row)
-
-        root.addWidget(add_group)
+        assets_layout.addWidget(add_group)
 
         # Splitter: table (left) and details (right)
         split = QSplitter(Qt.Orientation.Horizontal)
@@ -323,14 +330,64 @@ class AiTradingWidget(QWidget):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 2)
 
-        root.addWidget(split)
+        assets_layout.addWidget(split)
 
-        # Bottom log
-        log_title = QLabel("Activity Log")
-        log_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        root.addWidget(log_title)
-        self._log = QPlainTextEdit(); self._log.setReadOnly(True); self._log.setPlaceholderText("Execution and decision events will appear here…")
-        root.addWidget(self._log)
+        self._tabs.addTab(assets_tab, "Assets")
+
+    # --- Strategies tab ---
+        strat_tab = QWidget(); strat_layout = QHBoxLayout(strat_tab)
+        self._strat_list = QListWidget(); self._strat_list.itemClicked.connect(self._on_strat_selected)
+        strat_layout.addWidget(self._strat_list, 1)
+    # editor form
+        strat_form = QFormLayout()
+        self._s_name = QLineEdit(); self._s_buy = QDoubleSpinBox(); self._s_buy.setRange(0,10); self._s_buy.setSingleStep(0.1)
+        self._s_sell = QDoubleSpinBox(); self._s_sell.setRange(0,10); self._s_sell.setSingleStep(0.1)
+        self._s_hys = QSpinBox(); self._s_hys.setRange(1,10)
+        self._s_cool = QSpinBox(); self._s_cool.setRange(1,240)
+        self._s_sl = QDoubleSpinBox(); self._s_sl.setRange(0.1,50.0); self._s_sl.setSingleStep(0.1); self._s_sl.setSuffix(" %")
+        self._s_tp = QDoubleSpinBox(); self._s_tp.setRange(0.1,200.0); self._s_tp.setSingleStep(0.1); self._s_tp.setSuffix(" %")
+        self._s_int = QComboBox(); self._s_int.addItems(["1m","2m","5m","15m","60m"])
+        strat_form.addRow("Name", self._s_name)
+        strat_form.addRow("Buy ≥", self._s_buy)
+        strat_form.addRow("Sell ≤", self._s_sell)
+        strat_form.addRow("Hysteresis", self._s_hys)
+        strat_form.addRow("Cooldown (min)", self._s_cool)
+        strat_form.addRow("Stop-Loss %", self._s_sl)
+        strat_form.addRow("Take-Profit %", self._s_tp)
+        strat_form.addRow("Interval", self._s_int)
+    # actions
+        strat_btns = QHBoxLayout()
+        self._s_save = QPushButton("Save/Update"); self._s_save.clicked.connect(self._save_strategy)
+        self._s_delete = QPushButton("Delete"); self._s_delete.clicked.connect(self._delete_strategy)
+        strat_btns.addWidget(self._s_save); strat_btns.addWidget(self._s_delete)
+        form_wrap = QVBoxLayout(); form_right = QFrame(); form_right.setLayout(QVBoxLayout()); form_right.layout().addLayout(strat_form); form_right.layout().addLayout(strat_btns);
+        strat_layout.addWidget(form_right, 2)
+        self._tabs.addTab(strat_tab, "Strategies")
+
+        # --- Settings tab ---
+        settings_tab = QWidget(); st_layout = QFormLayout()
+        self._set_mode = QComboBox(); self._set_mode.addItems(["Paper","Live"]) 
+        self._set_mode.setCurrentText("Paper" if self._paper_mode else "Live")
+        self._set_interval = QComboBox(); self._set_interval.addItems(["1m","2m","5m","15m","60m"]); self._set_interval.setCurrentText(self._global_interval)
+        self._set_hours = QCheckBox("Trading hours only"); self._set_hours.setChecked(self._cfg.config.globals.trading_hours_only)
+        st_layout.addRow("Mode", self._set_mode)
+        st_layout.addRow("Global Interval", self._set_interval)
+        st_layout.addRow(self._set_hours)
+        self._save_settings_btn = QPushButton("Save Settings"); self._save_settings_btn.clicked.connect(self._save_settings)
+        st_btn_row = QHBoxLayout(); st_btn_row.addStretch(); st_btn_row.addWidget(self._save_settings_btn)
+        settings_v = QVBoxLayout(settings_tab)
+        settings_v.addLayout(st_layout)
+        settings_v.addLayout(st_btn_row)
+        self._tabs.addTab(settings_tab, "Settings")
+
+    # --- Logs tab ---
+        logs_tab = QWidget(); lyt = QVBoxLayout(logs_tab); 
+        lyt.addWidget(QLabel("Activity Log")); 
+        self._log = QPlainTextEdit(); self._log.setReadOnly(True); self._log.setPlaceholderText("Execution and decision events will appear here…");
+        lyt.addWidget(self._log)
+        self._tabs.addTab(logs_tab, "Logs")
+
+    # moved to Logs tab
 
     # ---- Helpers ----
     def _open_settings(self):
@@ -348,7 +405,16 @@ class AiTradingWidget(QWidget):
         qty = self._qty_spin.value()
         profile = self._profile_combo.currentText()
         interval = "Global" if self._use_global_interval.isChecked() else self._custom_interval.currentText()
-
+        # persist
+        self._cfg.add_asset(AssetEntry(
+            symbol=symbol,
+            quantity=qty,
+            strategy=profile,
+            use_global_interval=self._use_global_interval.isChecked(),
+            custom_interval=self._custom_interval.currentText(),
+            enabled=False,
+        ))
+        # update table UI
         row = self._table.rowCount()
         self._table.insertRow(row)
         # On (placeholder text “Off”)
@@ -370,3 +436,99 @@ class AiTradingWidget(QWidget):
 
         # Clear inputs for next add
         self._symbol_edit.clear()
+
+    # ---- Config wiring helpers ----
+    def _load_from_config(self):
+        # top bar
+        self._mode_combo.setCurrentText(self._cfg.config.globals.mode)
+        self._global_interval_combo.setCurrentText(self._cfg.config.globals.interval)
+        self._hours_only.setChecked(self._cfg.config.globals.trading_hours_only)
+        # assets table
+        self._table.setRowCount(0)
+        for a in self._cfg.config.assets:
+            row = self._table.rowCount(); self._table.insertRow(row)
+            self._table.setItem(row, 0, QTableWidgetItem("On" if a.enabled else "Off"))
+            self._table.setItem(row, 1, QTableWidgetItem(a.symbol))
+            self._table.setItem(row, 2, QTableWidgetItem(a.strategy))
+            self._table.setItem(row, 3, QTableWidgetItem(str(a.quantity)))
+            interval = "Global" if a.use_global_interval else a.custom_interval
+            self._table.setItem(row, 4, QTableWidgetItem(interval))
+            self._table.setItem(row, 5, QTableWidgetItem("—"))
+            self._table.setItem(row, 6, QTableWidgetItem("Idle"))
+            action_frame = QFrame(); h = QHBoxLayout(action_frame); h.setContentsMargins(0,0,0,0)
+            pause = QPushButton("Pause"); close = QPushButton("Close")
+            h.addWidget(pause); h.addWidget(close)
+            self._table.setCellWidget(row, 7, action_frame)
+        # strategies list
+        self._refresh_strategy_list()
+
+        # bind top controls to persist
+        self._mode_combo.currentTextChanged.connect(self._on_mode_changed)
+        self._global_interval_combo.currentTextChanged.connect(self._on_interval_changed)
+        self._hours_only.toggled.connect(self._on_hours_toggled)
+
+    def _refresh_strategy_list(self):
+        self._strat_list.clear()
+        for name in sorted(self._cfg.list_strategies()):
+            QListWidgetItem(name, self._strat_list)
+
+    def _on_strat_selected(self, item: QListWidgetItem):
+        name = item.text()
+        s = self._cfg.get_strategy(name)
+        if not s:
+            return
+        self._s_name.setText(s.name)
+        self._s_buy.setValue(s.buy_threshold)
+        self._s_sell.setValue(s.sell_threshold)
+        self._s_hys.setValue(s.hysteresis)
+        self._s_cool.setValue(s.cooldown_min)
+        self._s_sl.setValue(s.sl_pct)
+        self._s_tp.setValue(s.tp_pct)
+        self._s_int.setCurrentText(s.interval)
+
+    def _save_strategy(self):
+        name = self._s_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Strategy", "Name is required")
+            return
+        s = Strategy(
+            name=name,
+            buy_threshold=self._s_buy.value(),
+            sell_threshold=self._s_sell.value(),
+            hysteresis=self._s_hys.value(),
+            cooldown_min=self._s_cool.value(),
+            sl_pct=self._s_sl.value(),
+            tp_pct=self._s_tp.value(),
+            interval=self._s_int.currentText(),
+        )
+        self._cfg.upsert_strategy(s)
+        self._refresh_strategy_list()
+
+    def _delete_strategy(self):
+        name = self._s_name.text().strip()
+        if not name:
+            return
+        self._cfg.delete_strategy(name)
+        self._s_name.clear()
+        self._refresh_strategy_list()
+
+    def _save_settings(self):
+        self._cfg.update_globals(
+            mode=self._set_mode.currentText(),
+            interval=self._set_interval.currentText(),
+            trading_hours_only=self._set_hours.isChecked(),
+        )
+        # reflect in top bar too
+        self._mode_combo.setCurrentText(self._cfg.config.globals.mode)
+        self._global_interval_combo.setCurrentText(self._cfg.config.globals.interval)
+        self._hours_only.setChecked(self._cfg.config.globals.trading_hours_only)
+
+    # top bar change handlers
+    def _on_mode_changed(self, text: str):
+        self._cfg.update_globals(mode=text)
+
+    def _on_interval_changed(self, text: str):
+        self._cfg.update_globals(interval=text)
+
+    def _on_hours_toggled(self, checked: bool):
+        self._cfg.update_globals(trading_hours_only=checked)

@@ -1,0 +1,40 @@
+{
+  "globals": {
+    "trading_hours_only": true,
+    "mode": "Paper",
+    "interval": "1m"
+  },
+  "strategies": {
+    "Intraday": {
+      "name": "Intraday",
+      "buy_threshold": 8.0,
+      "sell_threshold": 4.0,
+      "hysteresis": 2,
+      "cooldown_min": 3,
+      "sl_pct": 3.0,
+      "tp_pct": 6.0,
+      "interval": "1m"
+    },
+    "Swing": {
+      "name": "Swing",
+      "buy_threshold": 7.0,
+      "sell_threshold": 5.0,
+      "hysteresis": 3,
+      "cooldown_min": 10,
+      "sl_pct": 5.0,
+      "tp_pct": 10.0,
+      "interval": "15m"
+    },
+    "Long-term": {
+      "name": "Long-term",
+      "buy_threshold": 6.5,
+      "sell_threshold": 5.5,
+      "hysteresis": 3,
+      "cooldown_min": 60,
+      "sl_pct": 8.0,
+      "tp_pct": 20.0,
+      "interval": "60m"
+    }
+  },
+  "assets": []
+}

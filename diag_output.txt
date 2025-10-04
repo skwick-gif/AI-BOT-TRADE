@@ -1,7 +1,9 @@
-2025-10-04 18:22:18 - trading_bot - INFO - Starting AI Trading Bot PyQt6 Application
+2025-10-04 18:36:30 - trading_bot - INFO - Starting AI Trading Bot PyQt6 Application
+QLayout::addChildLayout: layout QFormLayout "" already has a parent
+QLayout: Attempting to add QLayout "" to QWidget "", which already has a layout
 INFO: Fetching DFF...
 INFO: Fetching UNRATE...
-2025-10-04 18:22:18 - trading_bot - INFO - Application started successfully
+2025-10-04 18:36:31 - trading_bot - INFO - Application started successfully
 INFO: Fetching CPIAUCSL...
 INFO: Macro economic data received
 QThread: Destroyed while thread '' is still running
