@@ -1,6 +1,9 @@
 streamlit
 pandas
 pandas-ta
+scikit-learn
+pyarrow
+pandas-ta
 ib_insync
 python-dotenv
 requests

@@ -11,11 +11,13 @@ from PyQt6.QtWidgets import (
     QTabWidget, QFormLayout, QListWidget, QListWidgetItem, QMessageBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from concurrent.futures import ThreadPoolExecutor
 from PyQt6.QtGui import QFont
 import random
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from core.ai_trading_config import AiTradingConfigManager, Strategy, AssetEntry
+from services.ai_service import AIService
 
 
 class AutomationSettingsDialog(QDialog):
@@ -112,6 +114,8 @@ class AiTradingWidget(QWidget):
     test_api_requested = pyqtSignal()
     start_all_requested = pyqtSignal()
     stop_all_requested = pyqtSignal()
+    # Internal: emitted when a background score is ready (symbol, score, error)
+    score_ready = pyqtSignal(str, float, object)
 
     def __init__(self):
         super().__init__()
@@ -124,6 +128,11 @@ class AiTradingWidget(QWidget):
         self._timers = {}  # symbol -> QTimer
         self._asset_rows = {}  # symbol -> row index
         self._rt_state = {}  # symbol -> { 'last_signal': str, 'h_count': int, 'cooldown_until': datetime|None }
+        self._inflight = set()  # symbols currently being scored
+        self._executor = ThreadPoolExecutor(max_workers=3)
+        # short-lived cache for scores to reduce repeated calls
+        self._score_cache = {}  # type: ignore[var-annotated]
+        self._score_ttl_seconds = 10  # reuse score for a short window to reduce bursts
         # daily guardrails state (skeleton)
         self._daily_date = date.today()
         self._daily_trade_count = 0
@@ -131,12 +140,17 @@ class AiTradingWidget(QWidget):
 
         self._build_ui()
         self._load_from_config()
+        # wire internal signal for background scoring results
+        self.score_ready.connect(self._on_score_ready)
 
     # ---- Public hooks for future wiring ----
     def set_ibkr_service(self, service):
         """Placeholder to receive IBKR service later."""
         # No-op in skeleton
         pass
+
+    def set_ai_service(self, service: AIService):
+        self._ai_service = service
 
     def set_api_status(self, ok: bool):
         self._api_ok = ok
@@ -566,7 +580,7 @@ class AiTradingWidget(QWidget):
             self._stop_timer_for_asset(symbol)
             self._set_status(symbol, "Stopped")
 
-    def _start_timer_for_asset(self, asset: AssetEntry):
+    def _start_timer_for_asset(self, asset: AssetEntry, *, start_jitter_ms: int | None = None):
         sym = asset.symbol.upper()
         # stop existing first
         self._stop_timer_for_asset(sym)
@@ -576,7 +590,11 @@ class AiTradingWidget(QWidget):
         t = QTimer(self)
         t.setInterval(ms)
         t.timeout.connect(lambda s=sym: self._evaluate_asset(s))
-        t.start()
+        if start_jitter_ms and start_jitter_ms > 0:
+            # start the repeating timer after a jitter to stagger load
+            QTimer.singleShot(start_jitter_ms, t.start)
+        else:
+            t.start()
         self._timers[sym] = t
 
     def _stop_timer_for_asset(self, symbol: str):
@@ -595,12 +613,66 @@ class AiTradingWidget(QWidget):
         asset = self._find_asset(symbol)
         if not asset:
             return
-        strat = self._get_strategy_for_asset(asset)
-        # demo score; replace later with real AI signal
-        score = round(random.uniform(0, 10), 2)
-        signal = "BUY" if score >= float(strat.buy_threshold) else ("SELL" if score <= float(strat.sell_threshold) else "HOLD")
+        # short-lived cache: if recent score exists, reuse it instead of calling AI
+        try:
+            last = self._score_cache.get(symbol.upper())
+            if last:
+                ts, val = last
+                if (datetime.now() - ts).total_seconds() < self._score_ttl_seconds:
+                    # process cached value as if it just arrived
+                    self._on_score_ready(symbol, val, None)
+                    return
+        except Exception:
+            pass
+        # get AI score asynchronously to avoid blocking UI
+        if not hasattr(self, "_ai_service") or not self._ai_service:
+            self._append_log(f"[{symbol}] AI service not configured; skipping evaluation")
+            return
+        sym = asset.symbol.upper()
+        if sym in self._inflight:
+            # don't start another request if one is already running
+            self._append_log(f"[{symbol}] scoring already in-flight; skipping")
+            return
+        self._inflight.add(sym)
+        self._set_status(sym, "Scoring…")
+        self._executor.submit(self._score_worker, sym)
 
-        # cooldown
+    def _score_worker(self, symbol: str):
+        try:
+            # pass profile to prompt builder for better alignment
+            asset = self._find_asset(symbol)
+            prof = asset.strategy if asset else None
+            # include thresholds from the asset's strategy to guide scoring
+            thresholds = None
+            if asset:
+                strat = self._get_strategy_for_asset(asset)
+                thresholds = {
+                    "buy_threshold": float(strat.buy_threshold),
+                    "sell_threshold": float(strat.sell_threshold),
+                }
+            score = float(self._ai_service.score_symbol_numeric_sync(symbol, profile=prof, thresholds=thresholds))
+            self.score_ready.emit(symbol, score, None)
+        except Exception as e:
+            self.score_ready.emit(symbol, 0.0, e)
+
+    def _on_score_ready(self, symbol: str, score: float, error: object):
+        # called on the main thread via Qt signal
+        self._inflight.discard(symbol.upper())
+        if error is not None:
+            self._append_log(f"[{symbol}] AI error: {error}")
+            self._set_status(symbol, "AI error")
+            return
+        # update cache
+        try:
+            self._score_cache[symbol.upper()] = (datetime.now(), float(score))
+        except Exception:
+            pass
+        asset = self._find_asset(symbol)
+        if not asset:
+            # asset might have been removed while scoring
+            return
+        strat = self._get_strategy_for_asset(asset)
+        signal = "BUY" if score >= float(strat.buy_threshold) else ("SELL" if score <= float(strat.sell_threshold) else "HOLD")
         st = self._ensure_state(symbol)
         now = datetime.now()
         if st.get("cooldown_until") and now < st["cooldown_until"]:
@@ -608,21 +680,18 @@ class AiTradingWidget(QWidget):
             self._update_score_and_panel(symbol, score, "COOLDOWN")
             self._append_log(f"[{symbol}] cooldown active, signal={signal}, score={score}")
             return
-
         # hysteresis cycles
         if signal == st.get("last_signal") and signal != "HOLD":
             st["h_count"] = st.get("h_count", 0) + 1
         else:
             st["h_count"] = 1 if signal != "HOLD" else 0
             st["last_signal"] = signal
-
         needed = max(1, int(strat.hysteresis))
         if signal == "HOLD":
             self._set_status(symbol, "HOLD")
             self._update_score_and_panel(symbol, score, "HOLD")
-            self._append_log(f"[{symbol}] hold score={score}")
+            # reduce log spam: only log meaningful transitions
             return
-
         if st["h_count"] >= needed:
             decision = signal
             # guardrails: max trades/day
@@ -651,7 +720,6 @@ class AiTradingWidget(QWidget):
             phase = f"{signal} ({st['h_count']}/{needed})"
             self._set_status(symbol, phase)
             self._update_score_and_panel(symbol, score, phase)
-            self._append_log(f"[{symbol}] building {phase} score={score}")
 
     def _reset_daily_counters_if_new_day(self):
         today = date.today()
@@ -661,7 +729,7 @@ class AiTradingWidget(QWidget):
             self._daily_pnl = 0.0
             self._append_log("Daily counters reset")
 
-    def _update_score_and_panel(self, symbol: str, score: float, status_text: str):
+    def _update_score_and_panel(self, symbol: str, score: float, status_text: str, reason: str = ""):
         row = self._row_for_symbol(symbol)
         if row >= 0:
             self._table.setItem(row, 5, QTableWidgetItem(str(score)))
@@ -672,7 +740,7 @@ class AiTradingWidget(QWidget):
             if hasattr(self, "_reason"):
                 a = self._find_asset(symbol)
                 sname = a.strategy if a else "?"
-                self._reason.setPlainText(f"Strategy: {sname}\nScore={score}\nState={status_text}\nNote: demo scoring; thresholds/hysteresis/cooldown applied")
+                self._reason.setPlainText(f"Strategy: {sname}\nScore={score}\nState={status_text}\n{reason}")
 
     def _on_selection_changed(self):
         row = self._table.currentRow()
@@ -703,7 +771,7 @@ class AiTradingWidget(QWidget):
             self._on_add_asset()
 
         # Enable and start timers for all assets, then evaluate once immediately
-        for a in self._cfg.config.assets:
+        for idx, a in enumerate(self._cfg.config.assets):
             sym = a.symbol
             # ensure UI checkbox is checked
             row = self._row_for_symbol(sym)
@@ -714,15 +782,21 @@ class AiTradingWidget(QWidget):
             # set enabled in config if needed
             if not a.enabled:
                 a.enabled = True
-            # start timer and evaluate immediately
-            self._start_timer_for_asset(a)
+            # start timer with jitter to spread load and schedule initial eval with jitter
+            jitter = 300 + (idx % 10) * 120  # deterministic light staggering
+            self._start_timer_for_asset(a, start_jitter_ms=jitter)
             self._set_status(sym, "Scheduled")
-            self._evaluate_asset(sym)
+            self._schedule_initial_eval(sym, jitter_ms=jitter)
         self._cfg.save()
         if not self._cfg.config.assets:
             self._append_log("No assets to start. Add symbols via the Add button.")
         else:
             self._append_log("Started all assets")
+
+    def _schedule_initial_eval(self, symbol: str, *, jitter_ms: int = 0):
+        # schedule a one-shot evaluation after a short jitter to avoid bursts
+        delay = max(0, int(jitter_ms))
+        QTimer.singleShot(delay, lambda s=symbol: self._evaluate_asset(s))
 
     def _stop_all(self):
         for sym in list(self._timers.keys()):
@@ -777,6 +851,11 @@ class AiTradingWidget(QWidget):
         # ensure timers are stopped on close
         for sym in list(self._timers.keys()):
             self._stop_timer_for_asset(sym)
+        # shut down background executor
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def _on_strat_selected(self, item: QListWidgetItem):

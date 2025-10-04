@@ -1,0 +1,107 @@
+{
+  "ticker": "WBI",
+  "collected_at": "2025-09-26T12:18:20.222153",
+  "date_range": {
+    "start": "2025-09-17",
+    "end": "2025-09-19"
+  },
+  "price": {
+    "source": "alphavantage",
+    "yahoo": {
+      "daily": [
+        {
+          "date": "2025-09-17",
+          "open": 25.0,
+          "high": 25.020000457763672,
+          "low": 22.450000762939453,
+          "close": 22.829999923706055,
+          "adj_close": 22.829999923706055,
+          "volume": 11627200
+        },
+        {
+          "date": "2025-09-18",
+          "open": 23.25,
+          "high": 23.540000915527344,
+          "low": 22.5,
+          "close": 22.600000381469727,
+          "adj_close": 22.600000381469727,
+          "volume": 2149800
+        },
+        {
+          "date": "2025-09-19",
+          "open": 22.719999313354492,
+          "high": 23.799999237060547,
+          "low": 22.219999313354492,
+          "close": 23.079999923706055,
+          "adj_close": 23.079999923706055,
+          "volume": 1590500
+        }
+      ]
+    },
+    "alphavantage": {
+      "daily": [
+        {
+          "date": "2025-09-17",
+          "open": 25.0,
+          "high": 25.020000457763672,
+          "low": 22.450000762939453,
+          "close": 22.829999923706055,
+          "adj_close": null,
+          "volume": 11627200
+        },
+        {
+          "date": "2025-09-18",
+          "open": 23.25,
+          "high": 23.540000915527344,
+          "low": 22.5,
+          "close": 22.600000381469727,
+          "adj_close": null,
+          "volume": 2149800
+        },
+        {
+          "date": "2025-09-19",
+          "open": 22.719999313354492,
+          "high": 23.799999237060547,
+          "low": 22.219999313354492,
+          "close": 23.079999923706055,
+          "adj_close": null,
+          "volume": 1590500
+        }
+      ]
+    }
+  },
+  "corporate_actions": {
+    "source": "yahoo",
+    "yahoo": {
+      "dividends": [],
+      "splits": []
+    },
+    "dividends": []
+  },
+  "reference": {},
+  "fundamentals": {
+    "yahoo": {
+      "overview": {
+        "longName": "WaterBridge Infrastructure LLC",
+        "shortName": "WaterBridge Infrastructure LLC",
+        "sector": "Utilities",
+        "industry": "Utilities - Regulated Water",
+        "country": "United States",
+        "website": "https://www.h2obridge.com",
+        "marketCap": 2630545920,
+        "longBusinessSummary": "WaterBridge Infrastructure LLC, water infrastructure company, provides water management solutions through integrated pipeline and water handling networks in the United States. It offers produced water handling and gathering pipeline services; brackish water, recycled water, and produced water solutions; and gas transportation services. The company was incorporated in 2025 and is headquartered in Houston, Texas.",
+        "currency": "USD",
+        "quoteType": "EQUITY"
+      }
+    },
+    "alphavantage": {}
+  },
+  "notes": [
+    "fundamentals_minimal_yahoo"
+  ],
+  "quality": {
+    "missing": [
+      "full_fundamentals"
+    ]
+  }
+}

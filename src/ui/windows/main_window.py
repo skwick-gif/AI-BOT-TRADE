@@ -22,6 +22,7 @@ from ui.dialogs.api_keys_dialog import APIKeysDialog
 from ui.themes.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
 from services.ibkr_service import IBKRService
+from services.ai_service import AIService
 from utils.logger import get_logger
 from pathlib import Path
 
@@ -102,6 +103,11 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.dashboard_widget, "📊 Dashboard")
         # AI Trading Tab (replaces Portfolio)
         self.ai_trading_widget = AiTradingWidget()
+        # Provide AI service instance for scoring
+        try:
+            self.ai_trading_widget.set_ai_service(AIService(self.config))
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize AIService: {e}")
         self.tab_widget.addTab(self.ai_trading_widget, "⚡ AI Trading")
         
         # Chat Tab (AI Agent)

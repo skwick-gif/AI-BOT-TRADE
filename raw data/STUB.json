@@ -1,0 +1,108 @@
+{
+  "ticker": "STUB",
+  "collected_at": "2025-09-26T12:17:44.868442",
+  "date_range": {
+    "start": "2025-09-17",
+    "end": "2025-09-19"
+  },
+  "price": {
+    "source": "alphavantage",
+    "yahoo": {
+      "daily": [
+        {
+          "date": "2025-09-17",
+          "open": 25.350000381469727,
+          "high": 27.889999389648438,
+          "low": 22.0,
+          "close": 22.0,
+          "adj_close": 22.0,
+          "volume": 40143700
+        },
+        {
+          "date": "2025-09-18",
+          "open": 21.75,
+          "high": 21.799999237060547,
+          "low": 20.0,
+          "close": 20.5,
+          "adj_close": 20.5,
+          "volume": 15734900
+        },
+        {
+          "date": "2025-09-19",
+          "open": 20.399999618530273,
+          "high": 20.565000534057617,
+          "low": 18.459999084472656,
+          "close": 18.459999084472656,
+          "adj_close": 18.459999084472656,
+          "volume": 14891400
+        }
+      ]
+    },
+    "alphavantage": {
+      "daily": [
+        {
+          "date": "2025-09-17",
+          "open": 25.350000381469727,
+          "high": 27.889999389648438,
+          "low": 22.0,
+          "close": 22.0,
+          "adj_close": null,
+          "volume": 40143700
+        },
+        {
+          "date": "2025-09-18",
+          "open": 21.75,
+          "high": 21.799999237060547,
+          "low": 20.0,
+          "close": 20.5,
+          "adj_close": null,
+          "volume": 15734900
+        },
+        {
+          "date": "2025-09-19",
+          "open": 20.399999618530273,
+          "high": 20.565000534057617,
+          "low": 18.459999084472656,
+          "close": 18.459999084472656,
+          "adj_close": null,
+          "volume": 14891400
+        }
+      ]
+    }
+  },
+  "corporate_actions": {
+    "source": "yahoo",
+    "yahoo": {
+      "dividends": [],
+      "splits": []
+    },
+    "dividends": []
+  },
+  "reference": {},
+  "fundamentals": {
+    "yahoo": {
+      "overview": {
+        "longName": "StubHub Holdings, Inc.",
+        "shortName": "StubHub Holdings, Inc.",
+        "sector": "Communication Services",
+        "industry": "Internet Content & Information",
+        "country": "United States",
+        "fullTimeEmployees": 895,
+        "website": "https://www.stubhub.com",
+        "marketCap": 6789832704,
+        "longBusinessSummary": "StubHub Holdings, Inc. operates ticketing marketplace for live event tickets worldwide. It buys and sells sports, concerts, theatre, and other live events tickets through its websites and mobile applications under the StubHub and viagogo brand name. The company was formerly known as Pugnacious Endeavors, Inc. and changed its name to StubHub Holdings, Inc. in September 2021. StubHub Holdings, Inc. was founded in 2000 and is based in New York, New York. StubHub Holdings, Inc. is a subsidiary of Monkey Ventures Series A, LLC",
+        "currency": "USD",
+        "quoteType": "EQUITY"
+      }
+    },
+    "alphavantage": {}
+  },
+  "notes": [
+    "fundamentals_minimal_yahoo"
+  ],
+  "quality": {
+    "missing": [
+      "full_fundamentals"
+    ]
+  }
+}

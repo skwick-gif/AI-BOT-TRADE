@@ -1,0 +1,179 @@
+{
+  "ticker": "KLAR",
+  "collected_at": "2025-09-26T12:15:50.216666",
+  "date_range": {
+    "start": "2025-09-11",
+    "end": "2025-09-19"
+  },
+  "price": {
+    "source": "alphavantage",
+    "yahoo": {
+      "daily": [
+        {
+          "date": "2025-09-11",
+          "open": 45.5,
+          "high": 47.220001220703125,
+          "low": 42.7400016784668,
+          "close": 42.7400016784668,
+          "adj_close": 42.7400016784668,
+          "volume": 14059900
+        },
+        {
+          "date": "2025-09-12",
+          "open": 43.560001373291016,
+          "high": 43.849998474121094,
+          "low": 40.25,
+          "close": 42.91999816894531,
+          "adj_close": 42.91999816894531,
+          "volume": 11005300
+        },
+        {
+          "date": "2025-09-15",
+          "open": 43.599998474121094,
+          "high": 46.099998474121094,
+          "low": 42.70000076293945,
+          "close": 45.47999954223633,
+          "adj_close": 45.47999954223633,
+          "volume": 6548600
+        },
+        {
+          "date": "2025-09-16",
+          "open": 46.38999938964844,
+          "high": 47.47999954223633,
+          "low": 44.7400016784668,
+          "close": 45.41999816894531,
+          "adj_close": 45.41999816894531,
+          "volume": 4587100
+        },
+        {
+          "date": "2025-09-17",
+          "open": 45.0,
+          "high": 45.59000015258789,
+          "low": 43.560001373291016,
+          "close": 45.36000061035156,
+          "adj_close": 45.36000061035156,
+          "volume": 3515000
+        },
+        {
+          "date": "2025-09-18",
+          "open": 45.58000183105469,
+          "high": 45.97999954223633,
+          "low": 43.79999923706055,
+          "close": 44.9900016784668,
+          "adj_close": 44.9900016784668,
+          "volume": 3252700
+        },
+        {
+          "date": "2025-09-19",
+          "open": 44.9900016784668,
+          "high": 45.279998779296875,
+          "low": 42.81999969482422,
+          "close": 43.0099983215332,
+          "adj_close": 43.0099983215332,
+          "volume": 3332100
+        }
+      ]
+    },
+    "alphavantage": {
+      "daily": [
+        {
+          "date": "2025-09-11",
+          "open": 45.5,
+          "high": 47.220001220703125,
+          "low": 42.7400016784668,
+          "close": 42.7400016784668,
+          "adj_close": null,
+          "volume": 14059900
+        },
+        {
+          "date": "2025-09-12",
+          "open": 43.560001373291016,
+          "high": 43.849998474121094,
+          "low": 40.25,
+          "close": 42.91999816894531,
+          "adj_close": null,
+          "volume": 11005300
+        },
+        {
+          "date": "2025-09-15",
+          "open": 43.599998474121094,
+          "high": 46.099998474121094,
+          "low": 42.70000076293945,
+          "close": 45.47999954223633,
+          "adj_close": null,
+          "volume": 6548600
+        },
+        {
+          "date": "2025-09-16",
+          "open": 46.38999938964844,
+          "high": 47.47999954223633,
+          "low": 44.7400016784668,
+          "close": 45.41999816894531,
+          "adj_close": null,
+          "volume": 4587100
+        },
+        {
+          "date": "2025-09-17",
+          "open": 45.0,
+          "high": 45.59000015258789,
+          "low": 43.560001373291016,
+          "close": 45.36000061035156,
+          "adj_close": null,
+          "volume": 3515000
+        },
+        {
+          "date": "2025-09-18",
+          "open": 45.58000183105469,
+          "high": 45.97999954223633,
+          "low": 43.79999923706055,
+          "close": 44.9900016784668,
+          "adj_close": null,
+          "volume": 3252700
+        },
+        {
+          "date": "2025-09-19",
+          "open": 44.9900016784668,
+          "high": 45.279998779296875,
+          "low": 42.81999969482422,
+          "close": 43.0099983215332,
+          "adj_close": null,
+          "volume": 3332100
+        }
+      ]
+    }
+  },
+  "corporate_actions": {
+    "source": "yahoo",
+    "yahoo": {
+      "dividends": [],
+      "splits": []
+    },
+    "dividends": []
+  },
+  "reference": {},
+  "fundamentals": {
+    "yahoo": {
+      "overview": {
+        "shortName": "Klarna Group plc",
+        "sector": "Technology",
+        "industry": "Software - Infrastructure",
+        "country": "United Kingdom",
+        "fullTimeEmployees": 3098,
+        "website": "https://www.klarna.com",
+        "marketCap": 16225738752,
+        "longBusinessSummary": "Klarna Group plc operates as a technology-driven payments company in the United Kingdom, the United States, Germany, Sweden, and internationally. The company provides payment, advertising, and digital retail banking solutions. It offers Klarna App that creates holistic commerce destination experience for consumers. The company was formerly known as Klarna UK II plc and changed its name to Klarna Group plc in December 2023. Klarna Group plc was founded in 2005 and is based in London, United Kingdom.",
+        "currency": "USD",
+        "quoteType": "EQUITY"
+      }
+    },
+    "alphavantage": {}
+  },
+  "notes": [
+    "fundamentals_minimal_yahoo"
+  ],
+  "quality": {
+    "missing": [
+      "full_fundamentals"
+    ]
+  }
+}

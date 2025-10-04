@@ -7,9 +7,12 @@ import json
 from typing import Optional, Dict, Any, List
 import aiohttp
 from datetime import datetime
+import requests
+from requests.adapters import HTTPAdapter
 
 from core.config_manager import ConfigManager
 from utils.logger import get_logger
+from services.prompt_builder import build_numeric_score_prompt
 
 
 class AIService:
@@ -19,6 +22,7 @@ class AIService:
         self.config = config
         self.logger = get_logger("AIService")
         self.session: Optional[aiohttp.ClientSession] = None
+        self.http: Optional[requests.Session] = None
     
     async def __aenter__(self):
         """Async context manager entry"""
@@ -30,6 +34,18 @@ class AIService:
         if self.session:
             await self.session.close()
             self.session = None
+        # do not close self.http here; allow reuse across app lifetime
+
+    def get_http_session(self) -> requests.Session:
+        """Lazily create and return a pooled HTTP session for sync requests."""
+        if self.http is None:
+            s = requests.Session()
+            adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=0)
+            s.mount("https://", adapter)
+            s.mount("http://", adapter)
+            # optional: default headers could be set here if needed
+            self.http = s
+        return self.http
     
     async def get_ai_response(self, message: str, context: Optional[Dict[str, Any]] = None) -> str:
         """
@@ -287,3 +303,129 @@ Always remind users about risk management and due diligence."""
             prompt += f" Market context: {market_context}"
         
         return await self.get_ai_response(prompt)
+
+    async def score_symbol(self, symbol: str, *, strategy: Optional[Dict[str, Any]] = None, market_context: Optional[Dict[str, Any]] = None, timeout: float = 15.0) -> Dict[str, Any]:
+        """Return structured score for a symbol using Perplexity.
+
+        Output schema:
+        { "score": number (0-10), "action": "BUY"|"SELL"|"HOLD", "reason": string }
+
+        The action should be consistent with thresholds if provided in `strategy`:
+        - BUY if score >= buy_threshold
+        - SELL if score <= sell_threshold
+        - otherwise HOLD
+        """
+        if not self.config.perplexity.api_key:
+            raise RuntimeError("Perplexity API key not configured")
+
+        strat_txt = ""
+        if strategy:
+            bt = strategy.get("buy_threshold", 8.0)
+            st = strategy.get("sell_threshold", 4.0)
+            strat_txt = f"Use thresholds: buy_threshold={bt}, sell_threshold={st}."
+
+        ctx_txt = ""
+        if market_context:
+            try:
+                ctx_txt = f"Context: {json.dumps(market_context)[:1000]}"
+            except Exception:
+                ctx_txt = ""
+
+        prompt = (
+            f"You are an AI trader scoring a trading opportunity for symbol '{symbol}'. "
+            f"{strat_txt} Return ONLY JSON with keys score (0-10), action (BUY/SELL/HOLD), reason (short). "
+            f"Do not include any commentary outside JSON. {ctx_txt}"
+        )
+
+        # call API
+        text = await self._call_perplexity_api(prompt)
+
+        # attempt to parse JSON
+        obj: Dict[str, Any]
+        try:
+            obj = json.loads(text)
+        except Exception:
+            # try to extract JSON block
+            import re
+            m = re.search(r"\{[\s\S]*\}", text)
+            if m:
+                obj = json.loads(m.group(0))
+            else:
+                # last resort: try to parse a number score from text
+                try:
+                    import re
+                    num = re.search(r"([0-9]+(\.[0-9]+)?)", text)
+                    score = float(num.group(1)) if num else 5.0
+                except Exception:
+                    score = 5.0
+                obj = {"score": score, "action": "HOLD", "reason": text[:120]}
+
+        # normalize fields
+        score = float(obj.get("score", 5.0))
+        action = str(obj.get("action", "HOLD")).upper()
+        reason = str(obj.get("reason", ""))
+
+        # enforce thresholds consistency if provided
+        if strategy:
+            bt = float(strategy.get("buy_threshold", 8.0))
+            st = float(strategy.get("sell_threshold", 4.0))
+            if score >= bt:
+                action = "BUY"
+            elif score <= st:
+                action = "SELL"
+            else:
+                action = "HOLD"
+
+        return {"score": score, "action": action, "reason": reason}
+
+    def score_symbol_numeric_sync(self, symbol: str, *, timeout: float = 8.0, market_context: Optional[Dict[str, Any]] = None, profile: Optional[str] = None, thresholds: Optional[Dict[str, float]] = None) -> float:
+        """Return ONLY a numeric score 0-10 for symbol using a minimal prompt (synchronous HTTP).
+
+        Raises on failure; caller decides what to do (no dummy fallback).
+        """
+        if not self.config.perplexity.api_key:
+            raise RuntimeError("Perplexity API key not configured")
+
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.config.perplexity.api_key}",
+            "Content-Type": "application/json",
+        }
+        # compact, profile-aware numeric-only prompt
+        prompt = build_numeric_score_prompt(symbol, profile=profile, market_context=market_context, thresholds=thresholds)
+        payload = {
+            "model": self.config.perplexity.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 8,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "stream": False,
+        }
+        session = self.get_http_session()
+        resp = session.post(url, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        # try parse float from entire text
+        try:
+            # remove any extraneous characters
+            cleaned = text.strip().split()[0].strip('`\"')
+            val = float(cleaned)
+            # bound 0..10
+            if val < 0:
+                val = 0.0
+            if val > 10:
+                val = 10.0
+            return val
+        except Exception:
+            # last attempt: find a number inside
+            import re
+            m = re.search(r"([0-9]+(\.[0-9]+)?)", text)
+            if not m:
+                raise ValueError(f"Non-numeric response: {text[:120]}")
+            val = float(m.group(1))
+            if val < 0:
+                val = 0.0
+            if val > 10:
+                val = 10.0
+            return val
