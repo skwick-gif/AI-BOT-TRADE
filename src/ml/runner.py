@@ -47,11 +47,55 @@ def _make_pipelines(task: str, numeric: List[str], categorical: List[str], selec
             "LogisticRegression": LogisticRegression(max_iter=1000, n_jobs=None),
             "RandomForest": RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1),
         }
+        # מודלים מתקדמים
+        try:
+            from lightgbm import LGBMClassifier
+            default_models["LightGBM"] = LGBMClassifier(n_estimators=200, random_state=42)
+        except ImportError:
+            pass
+        try:
+            from catboost import CatBoostClassifier
+            default_models["CatBoost"] = CatBoostClassifier(iterations=200, random_state=42, verbose=0)
+        except ImportError:
+            pass
+        try:
+            from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier
+            default_models["ExtraTrees"] = ExtraTreesClassifier(n_estimators=200, random_state=42)
+            default_models["GradientBoosting"] = GradientBoostingClassifier(n_estimators=200, random_state=42)
+        except ImportError:
+            pass
+        # TabNet
+        try:
+            from pytorch_tabnet.tab_model import TabNetClassifier
+            default_models["TabNet"] = TabNetClassifier()
+        except ImportError:
+            pass
     else:
         default_models = {
             "Ridge": Ridge(alpha=1.0),
             "RandomForest": RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
         }
+        try:
+            from lightgbm import LGBMRegressor
+            default_models["LightGBM"] = LGBMRegressor(n_estimators=200, random_state=42)
+        except ImportError:
+            pass
+        try:
+            from catboost import CatBoostRegressor
+            default_models["CatBoost"] = CatBoostRegressor(iterations=200, random_state=42, verbose=0)
+        except ImportError:
+            pass
+        try:
+            from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor
+            default_models["ExtraTrees"] = ExtraTreesRegressor(n_estimators=200, random_state=42)
+            default_models["GradientBoosting"] = GradientBoostingRegressor(n_estimators=200, random_state=42)
+        except ImportError:
+            pass
+        try:
+            from pytorch_tabnet.tab_model import TabNetRegressor
+            default_models["TabNet"] = TabNetRegressor()
+        except ImportError:
+            pass
     models = default_models
     if selected:
         filtered = {k: v for k, v in default_models.items() if k in selected}

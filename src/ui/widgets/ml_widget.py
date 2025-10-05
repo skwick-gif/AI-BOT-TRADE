@@ -132,6 +132,8 @@ class PipelineRunWorker(QObject):
             lookback = int(p.get("lookback", 500))
             window = str(p.get("window", "expanding"))
             models = p.get("models") or []
+            max_loops = int(p.get("max_loops", 5))
+            quality_threshold = float(p.get("quality_threshold", 0.7))
 
             self.status_updated.emit("Initializing pipeline config...")
             self.progress_updated.emit(5)
@@ -142,129 +144,71 @@ class PipelineRunWorker(QObject):
             cfg.lookback_days = lookback
             cfg.window_mode = window  # type: ignore
 
-            self.status_updated.emit("Loading bronze data (Parquet)...")
-            self.progress_updated.emit(15)
-            bronze = load_bronze("data/bronze/daily", tickers=tickers if tickers else None)
-            if not bronze:
-                raise RuntimeError("No bronze Parquet files found for selected tickers")
-            # Report loaded tickers and row counts
-            try:
-                n_tickers = len(bronze)
-                n_rows_bronze = sum(len(df) for df in bronze.values())
-                self.status_updated.emit(f"Loaded bronze: {n_tickers} tickers, {n_rows_bronze} rows")
-            except Exception:
-                pass
+            # תהליך לולאת fine tuning לכל הורייזן
+            best_result = None
+            for horizon in [1, 5, 10]:
+                cfg.horizons = [horizon]
+                self.status_updated.emit(f"Loading bronze data (Parquet) for horizon {horizon}…")
+                self.progress_updated.emit(10)
+                bronze = load_bronze("data/bronze/daily", tickers=tickers if tickers else None)
+                if not bronze:
+                    self.error_occurred.emit("No bronze Parquet files found for selected tickers")
+                    return
+                self.status_updated.emit("Building features and labels…")
+                self.progress_updated.emit(20)
+                pooled = build_pooled_dataset(bronze, cfg)
+                if pooled is None or pooled.empty:
+                    self.error_occurred.emit("Pooled dataset is empty after feature/label building")
+                    return
 
-            self.status_updated.emit("Building features and labels...")
-            self.progress_updated.emit(35)
-            pooled = build_pooled_dataset(bronze, cfg)
-            if pooled is None or pooled.empty:
-                raise RuntimeError("Pooled dataset is empty after feature/label building")
-            # Report pooled shape and coverage
-            try:
-                n_rows = len(pooled)
-                dates = sorted(pd.to_datetime(pooled["date"]).dropna().unique())
-                if dates:
-                    self.status_updated.emit(f"Pooled dataset: {n_rows} rows, {pd.Timestamp(dates[0]).date()} → {pd.Timestamp(dates[-1]).date()}")
-                else:
-                    self.status_updated.emit(f"Pooled dataset: {n_rows} rows")
-            except Exception:
-                pass
+                for loop in range(max_loops):
+                    self.status_updated.emit(f"Training loop {loop+1}/{max_loops} for horizon {horizon}")
+                    self.progress_updated.emit(30 + int(loop * 10 / max_loops))
+                    results, preds, model_scores, confusions = walk_forward_run(
+                        pooled, cfg, selected_models=models if models else ["RandomForest"]
+                    )
+                    # תחזיות על תקופת holdout
+                    predictions = preds.get(str(horizon)) if preds else None
 
-            self.status_updated.emit("Running walk-forward evaluation...")
-            self.progress_updated.emit(60)
+                    # הזנה לסורק (פשוט: בדיקה האם יש מניות עם תחזית UP)
+                    scan_results = []
+                    if predictions is not None:
+                        for idx, row in predictions.iterrows():
+                            if row.get(f"y_h{horizon}_pred") == "UP":
+                                scan_results.append(row.get("ticker"))
 
-            # Provide a progress callback to surface step-level updates to the UI
-            def _wf_progress(frac: float, msg: str):
-                # Map 60-85% range to walk-forward internal progress
-                p = 60 + int(25 * max(0.0, min(1.0, frac)))
-                self.progress_updated.emit(p)
-                if msg:
-                    self.status_updated.emit(msg)
+                    # בדיקת איכות: השוואה בין תחזית לתוצאה אמיתית
+                    quality = 0.0
+                    if predictions is not None:
+                        y_true = predictions.get(f"y_h{horizon}")
+                        y_pred = predictions.get(f"y_h{horizon}_pred")
+                        if y_true is not None and y_pred is not None:
+                            from sklearn.metrics import f1_score
+                            try:
+                                quality = f1_score(y_true, y_pred, average="macro", labels=["DOWN","HOLD","UP"], zero_division=0)
+                            except Exception:
+                                quality = 0.0
 
-            # forward selected models if provided and run
-            selected = set(models) if models else None
-            results, preds, model_scores, confusions = walk_forward_run(
-                pooled, cfg, selected_models=selected, progress_cb=_wf_progress
-            )
+                    self.status_updated.emit(f"Loop {loop+1}: Horizon {horizon} Quality={quality:.3f} | Scan matches={len(scan_results)}")
 
-            self.status_updated.emit("Saving predictions and summarizing metrics...")
-            self.progress_updated.emit(85)
-            rows = self._save_predictions(preds)
+                    if best_result is None or quality > best_result.get("quality", 0):
+                        best_result = {
+                            "horizon": horizon,
+                            "loop": loop+1,
+                            "quality": quality,
+                            "scan_results": scan_results,
+                            "model_results": results,
+                        }
+                    if quality >= quality_threshold:
+                        break
 
-            # summarize metrics
-            # Compute unique as_of steps for clarity
-            try:
-                as_of_steps = len({r.as_of for r in results}) if results else 0
-            except Exception:
-                as_of_steps = 0
-            summary = {
-                "steps": len(results),
-                "as_of_steps": as_of_steps,
-                "rows_pred": rows,
-                "window": cfg.window_mode,
-            }
-            if results:
-                # average metric per horizon and overall
-                import pandas as pd
-                rf = pd.DataFrame([{
-                    "as_of": r.as_of,
-                    "h": r.horizon,
-                    "metric": r.metric_value,
-                } for r in results])
-                summary["avg_metric_overall"] = float(rf["metric"].mean())
-                for h, grp in rf.groupby("h"):
-                    summary[f"avg_metric_h{int(h)}"] = float(grp["metric"].mean())
-
-                # persist metrics CSV (append)
-                from datetime import datetime
-                from pathlib import Path
-                meta = {
-                    "timestamp": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                    "tickers": ",".join(tickers) if tickers else "",
-                    "holdout": cfg.holdout_last_days,
-                    "step": cfg.step_days,
-                    "lookback": cfg.lookback_days,
-                    "window": cfg.window_mode,
-                    "models": ",".join(models) if models else "",
-                }
-                metrics_dir = Path("data/silver")
-                metrics_dir.mkdir(parents=True, exist_ok=True)
-                metrics_csv = metrics_dir / "metrics.csv"
-                mrows = [{
-                    "as_of": r.as_of,
-                    "horizon": r.horizon,
-                    "metric_name": r.metric_name,
-                    "metric": r.metric_value,
-                    "n_train": r.n_train,
-                    "n_test": r.n_test,
-                    **meta,
-                } for r in results]
-                mdf = pd.DataFrame(mrows)
-                header = not metrics_csv.exists()
-                mdf.to_csv(metrics_csv, mode="a", header=header, index=False)
-
-                # per-model scores
-                if model_scores is not None and not model_scores.empty:
-                    ms_csv = metrics_dir / "model_scores.csv"
-                    ms = model_scores.copy()
-                    for k, v in meta.items():
-                        ms[k] = v
-                    ms_header = not ms_csv.exists()
-                    ms.to_csv(ms_csv, mode="a", header=ms_header, index=False)
-
-                # confusion counts
-                if confusions is not None and not confusions.empty:
-                    cf_csv = metrics_dir / "confusions.csv"
-                    cf = confusions.copy()
-                    for k, v in meta.items():
-                        cf[k] = v
-                    cf_header = not cf_csv.exists()
-                    cf.to_csv(cf_csv, mode="a", header=cf_header, index=False)
-
+            # תוצאה סופית
+            self.completed.emit({
+                "best_result": best_result
+            })
+            self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
             self.progress_updated.emit(100)
-            self.status_updated.emit("Pipeline run complete.")
-            self.completed.emit(summary)
+
         except Exception as e:
             self.error_occurred.emit(str(e))
         finally:
@@ -297,6 +241,11 @@ class ModelConfigWidget(QFrame):
         self.model_type_combo.addItems([
             "Random Forest",
             "XGBoost",
+            "LightGBM",
+            "CatBoost",
+            "TabNet",
+            "ExtraTrees",
+            "GradientBoosting",
             "Neural Network",
             "SVM",
             "Linear Regression",
