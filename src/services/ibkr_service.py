@@ -74,9 +74,19 @@ class IBKRService:
             except Exception:
                 env_port = None
             if env_port:
-                ports_to_try = [env_port, (7496 if env_port != 7496 else 7497)]
+                # Try explicit env port, then fallback across common TWS/Gateway ports
+                ports_to_try = [
+                    env_port,
+                    # TWS live/paper
+                    7496 if env_port != 7496 else 7497,
+                    7497,
+                    # IB Gateway live/paper
+                    4001,
+                    4002,
+                ]
             else:
-                ports_to_try = [7497, 7496]
+                # Default: try TWS paper/live then IB Gateway live/paper
+                ports_to_try = [7497, 7496, 4002, 4001]
 
             for port in ports_to_try:
                 if port in tried_ports:
@@ -93,6 +103,8 @@ class IBKRService:
                         self.last_error = msg
                         continue
                     self.logger.info(f"Connecting to IBKR at {self.config.host}:{port} (clientId={self.config.client_id})")
+                    if port in (4001, 4002):
+                        self.logger.info("Detected IB Gateway port; ensure Gateway is logged in and API is enabled. 'Read-Only' mode will prevent trading calls.")
                     # Connect to IB Gateway or TWS
                     self.ib.connect(
                         host=self.config.host,
@@ -130,6 +142,8 @@ class IBKRService:
                         )
                     self.last_error = msg
                     self.logger.warning(f"Connect attempt failed on port {port}: {msg}")
+                    if "Read-Only" in msg:
+                        self.logger.warning("IBKR API is in Read-Only mode. Disable Read-Only in TWS/Gateway API settings to place orders.")
                     self._connected = False
                     continue
             self.logger.error(f"Failed to connect to IBKR. Last error: {self.last_error}")

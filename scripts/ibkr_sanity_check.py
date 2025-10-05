@@ -23,26 +23,21 @@ PORT = int(os.environ.get("IBKR_PORT", "7497"))
 CLIENT_ID = int(os.environ.get("IBKR_CLIENT_ID", "1"))
 
 print(f"[SANITY] Connecting to IBKR at {HOST}:{PORT} (clientId={CLIENT_ID})")
+print("[SANITY] If TWS shows an 'Accept incoming connection?' dialog, please click 'Yes' within ~30s.")
+print("[SANITY] Ensure Global Configuration > API > Settings: 'Enable ActiveX and Socket Clients' is checked, and the Socket Port matches.")
 ib = IB()
-ib.connect(HOST, PORT, clientId=CLIENT_ID, timeout=10)
+ib.connect(HOST, PORT, clientId=CLIENT_ID, timeout=30)
 print(f"[SANITY] Connected: {ib.isConnected()}")
 
 accounts = list(ib.managedAccounts() or [])
 print(f"[SANITY] Managed accounts: {accounts}")
 
-acct = os.environ.get("IBKR_ACCOUNT_CODE")
-if acct and acct not in accounts:
-    print(f"[SANITY] Warning: IBKR_ACCOUNT_CODE='{acct}' not in managed accounts; ignoring.")
-    acct = None
-if not acct and accounts:
-    acct = accounts[0]
-
-if acct:
-    ib.reqAccountUpdates(True, acct)
-    print(f"[SANITY] Subscribed to account updates for '{acct}'")
-else:
+# Subscribe to account updates using the signature compatible across ib_insync versions
+try:
     ib.reqAccountUpdates(True)
-    print("[SANITY] Subscribed to account updates (no account specified)")
+    print("[SANITY] Subscribed to account updates")
+except TypeError as te:
+    print(f"[SANITY] Account updates subscription signature mismatch: {te}; proceeding without explicit subscription.")
 
 # Give IB a moment to populate summary/portfolio internally
 ib.sleep(1.0)
