@@ -40,6 +40,8 @@ class GlobalSettings:
     interval: str = "1m"
     daily_loss_limit: float = 0.0
     max_trades_day: int = 0
+    use_custom_prompt: bool = False
+    custom_prompt: str = ""
 
 
 @dataclass
@@ -83,6 +85,8 @@ class AiTradingConfigManager:
             interval=str(g.get("interval", "1m")),
             daily_loss_limit=float(g.get("daily_loss_limit", 0.0)),
             max_trades_day=int(g.get("max_trades_day", 0)),
+            use_custom_prompt=bool(g.get("use_custom_prompt", False)),
+            custom_prompt=str(g.get("custom_prompt", "")),
         )
         strategies_dict = {}
         for name, s in (data.get("strategies", {}) or {}).items():

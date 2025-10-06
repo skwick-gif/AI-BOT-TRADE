@@ -19,6 +19,12 @@ def load_bronze(dir_path: Path | str = BRONZE_DIR_DEFAULT, tickers: Optional[Ite
     Returns a dict of {ticker: df} with columns [ticker, date, open, high, low, close, adj_close, volume, source].
     """
     p = Path(dir_path)
+    # Fallback: if daily folder is missing or empty, try data/bronze directly
+    if (not p.exists()) or (not any(p.glob("*.parquet"))):
+        alt = Path("data/bronze")
+        if alt.exists() and any(alt.glob("*.parquet")):
+            print(f"[ML] Falling back to bronze dir: {alt}")
+            p = alt
     out: Dict[str, pd.DataFrame] = {}
     if not p.exists():
         return out
@@ -32,6 +38,11 @@ def load_bronze(dir_path: Path | str = BRONZE_DIR_DEFAULT, tickers: Optional[Ite
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
             df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        # Ensure ticker/source columns exist (new stock_data converter may omit them)
+        if "ticker" not in df.columns:
+            df.insert(0, "ticker", t)
+        if "source" not in df.columns:
+            df["source"] = "stock_data"
         out[t] = df
     print(f"[ML] Loaded {len(out)} tickers from {p}.")
     for k, v in out.items():

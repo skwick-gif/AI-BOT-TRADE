@@ -17,6 +17,7 @@ from utils.logger import get_logger
 from ml.config import TrainingConfig
 from ml.dataset import load_bronze, build_pooled_dataset
 from ml.runner import walk_forward_run
+from ui.dialogs.data_update_dialog import DataUpdateDialog
 
 
 class ModelTrainingWorker(QObject):
@@ -119,6 +120,34 @@ class PipelineRunWorker(QObject):
                 count += len(df)
         return count
 
+    def _append_metrics_csv(self, as_of_results: list, window: str, tickers: list):
+        from pathlib import Path
+        import pandas as pd
+        outdir = Path("data/silver")
+        outdir.mkdir(parents=True, exist_ok=True)
+        fp = outdir / "metrics.csv"
+        rows = []
+        for r in as_of_results:
+            rows.append({
+                "as_of": getattr(r, "as_of", None),
+                "horizon": getattr(r, "horizon", None),
+                "metric": getattr(r, "metric_value", None),
+                "metric_name": getattr(r, "metric_name", None),
+                "n_train": getattr(r, "n_train", None),
+                "n_test": getattr(r, "n_test", None),
+                "tickers": ",".join(tickers) if tickers else "ALL",
+                "window": window,
+                "timestamp": pd.Timestamp.now(),
+            })
+        df = pd.DataFrame(rows)
+        if fp.exists():
+            try:
+                old = pd.read_csv(fp)
+                df = pd.concat([old, df], ignore_index=True)
+            except Exception:
+                pass
+        df.to_csv(fp, index=False)
+
     def run(self, params: object):  # params is a dict
         if self.is_running:
             self.error_occurred.emit("Pipeline is already running")
@@ -202,11 +231,26 @@ class PipelineRunWorker(QObject):
                     if quality >= quality_threshold:
                         break
 
-            # תוצאה סופית
+            # Persist predictions and metrics
+            try:
+                saved = self._save_predictions({k: v for k, v in preds.items()}) if preds else 0
+            except Exception:
+                saved = 0
+            try:
+                # Append compact step metrics
+                self._append_metrics_csv(results, window, tickers)
+            except Exception:
+                pass
+
+            # Final result
             self.completed.emit({
-                "best_result": best_result
+                "best_result": best_result or {},
+                "saved_predictions": int(saved),
             })
-            self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
+            if best_result:
+                self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
+            else:
+                self.status_updated.emit("Pipeline completed, but no best result identified")
             self.progress_updated.emit(100)
 
         except Exception as e:
@@ -531,6 +575,12 @@ class DataManagementWidget(QFrame):
         self.export_data_btn = QPushButton("📤 Export Data")
         self.export_data_btn.clicked.connect(self.export_data)
         button_layout.addWidget(self.export_data_btn)
+
+        # Daily update launcher
+        self.daily_update_btn = QPushButton("🗓️ Daily Update…")
+        self.daily_update_btn.setToolTip("Open the daily data update scheduler and progress window")
+        self.daily_update_btn.clicked.connect(self.open_daily_update)
+        button_layout.addWidget(self.daily_update_btn)
         
         button_layout.addStretch()
         layout.addLayout(button_layout)
@@ -557,6 +607,11 @@ class DataManagementWidget(QFrame):
         )
         if file_path:
             self.data_status_label.setText(f"Data exported to: {file_path}")
+
+    def open_daily_update(self):
+        dlg = DataUpdateDialog(self)
+        dlg.setModal(False)
+        dlg.show()
 
 
 class MLWidget(QWidget):
@@ -589,7 +644,7 @@ class MLWidget(QWidget):
         self.pipeline_worker.error_occurred.connect(self.on_pipeline_error)
         self.pipeline_thread.start()
         
-        # Setup UI
+    # Setup UI
         self.setup_ui()
         
         self.logger.info("ML widget initialized")
@@ -688,6 +743,25 @@ class MLWidget(QWidget):
         def _on_window_changed(text: str):
             self.lookback_spin.setEnabled(text == "rolling")
         self.window_combo.currentTextChanged.connect(_on_window_changed)
+
+        # Model selection for pipeline (comma-separated backend keys)
+        pipe_layout.addWidget(QLabel("Models:"))
+        self.pipeline_models_combo = QComboBox()
+        # Provide sensible defaults matching backend keys
+        self.pipeline_models_combo.addItems([
+            "RandomForest",
+            "LightGBM",
+            "CatBoost",
+            "LogisticRegression",
+        ])
+        pipe_layout.addWidget(self.pipeline_models_combo)
+
+        # Run pipeline button
+        self.run_pipeline_btn = QPushButton("🏃 Run Pipeline")
+        self.run_pipeline_btn.clicked.connect(self.start_pipeline_run)
+        pipe_layout.addWidget(self.run_pipeline_btn)
+
+        layout.addWidget(pipeline_frame)
     
     def start_training(self):
         """Start model training"""
@@ -732,8 +806,8 @@ class MLWidget(QWidget):
             else:
                 self.performance_widget.add_log_entry(f"Running on {len(tickers)} tickers: {', '.join(tickers[:10])}{'...' if len(tickers)>10 else ''}")
 
-            # Parse model selection
-            models_text = self.model_combo.currentText().strip()
+            # Parse model selection (single select, allow comma separated if user typed)
+            models_text = self.pipeline_models_combo.currentText().strip()
             selected_models = [m.strip() for m in models_text.split(',') if m.strip()] if models_text else []
 
             params = {

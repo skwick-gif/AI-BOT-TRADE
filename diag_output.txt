@@ -1,7 +1,4 @@
-2025-10-04 20:28:43 - trading_bot - INFO - Starting AI Trading Bot PyQt6 Application
-INFO: Fetching DFF...
-INFO: Fetching UNRATE...
-2025-10-04 20:28:44 - trading_bot - INFO - Application started successfully
-INFO: Fetching CPIAUCSL...
-INFO: Macro economic data received
-QThread: Destroyed while thread '' is still running
+Traceback (most recent call last):
+  File "C:\MyProjects\AI-BOT-TRADE\main.py", line 15, in <module>
+    from PyQt6.QtWidgets import QApplication
+ModuleNotFoundError: No module named 'PyQt6'

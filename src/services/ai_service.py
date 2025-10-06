@@ -429,3 +429,44 @@ Always remind users about risk management and due diligence."""
             if val > 10:
                 val = 10.0
             return val
+
+    def score_with_custom_prompt_numeric_sync(self, prompt: str, *, timeout: float = 10.0) -> float:
+        """Send a raw custom prompt to Perplexity and parse ONLY a numeric 0-10 response.
+
+        This is used for power-users who want to control the exact prompt. Caller is responsible
+        to ensure the prompt instructs the model to output only a number.
+        """
+        if not self.config.perplexity.api_key:
+            raise RuntimeError("Perplexity API key not configured")
+        url = "https://api.perplexity.ai/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.config.perplexity.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.config.perplexity.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 8,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "stream": False,
+        }
+        session = self.get_http_session()
+        resp = session.post(url, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        try:
+            cleaned = text.strip().split()[0].strip('`"')
+            val = float(cleaned)
+        except Exception:
+            import re
+            m = re.search(r"([0-9]+(\.[0-9]+)?)", text)
+            if not m:
+                raise ValueError(f"Non-numeric response: {text[:120]}")
+            val = float(m.group(1))
+        if val < 0:
+            val = 0.0
+        if val > 10:
+            val = 10.0
+        return val

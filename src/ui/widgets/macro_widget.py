@@ -7,11 +7,34 @@ import os
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QGridLayout, QPushButton
+    QFrame, QGridLayout, QPushButton, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QColor
 from datetime import datetime, timedelta
+
+
+class GraphDialog(QDialog):
+    """Small dialog to show a time series chart using pyqtgraph."""
+    def __init__(self, title: str, dates, values, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(500, 320)
+        # Lazy import to avoid hard dependency at import time
+        import pyqtgraph as pg
+        layout = QVBoxLayout(self)
+        plot = pg.PlotWidget()
+        plot.showGrid(x=True, y=True, alpha=0.3)
+        plot.setBackground('#2b2b2b')
+        pen = pg.mkPen(color=(20, 160, 133), width=2)  # match macro color scheme
+        # Convert dates to x axis as ordinal numbers
+        import numpy as np
+        x = np.array([d.toordinal() for d in dates], dtype=float)
+        y = np.array(values, dtype=float)
+        plot.plot(x, y, pen=pen)
+        plot.setLabel('left', 'Value')
+        plot.setLabel('bottom', 'Date')
+        layout.addWidget(plot)
 
 
 class SimpleLogger:
@@ -92,8 +115,10 @@ class MacroDataThread(QThread):
 class MacroIndicatorCard(QFrame):
     """Individual macro indicator display card"""
     
-    def __init__(self, indicator_data):
+    def __init__(self, indicator_data, series_id: str, on_click=None):
         super().__init__()
+        self.series_id = series_id
+        self._on_click = on_click
         self.setup_ui(indicator_data)
     
     def setup_ui(self, data):
@@ -149,6 +174,14 @@ class MacroIndicatorCard(QFrame):
             error_label.setStyleSheet("color: #f44336;")
             layout.addWidget(error_label)
 
+    def mousePressEvent(self, event):
+        try:
+            if callable(self._on_click):
+                self._on_click(self.series_id)
+        except Exception:
+            pass
+        return super().mousePressEvent(event)
+
 
 class MacroWidget(QWidget):
     """Main Macro Economic Indicators Widget"""
@@ -163,6 +196,9 @@ class MacroWidget(QWidget):
         
         # Start data fetch
         self.refresh_data()
+
+        # Default chart range start (per request)
+        self.chart_start_date = datetime(2024, 1, 1)
     
     def setup_ui(self):
         """Setup the main UI"""
@@ -224,9 +260,11 @@ class MacroWidget(QWidget):
             self.status_label.setText("❌ FRED API key not configured")
             self.status_label.setStyleSheet("color: #f44336;")
             self.logger.warning("FRED API key not configured")
-            
-            # Show demo data
-            self.show_demo_data()
+            # Clear any existing indicators and do not show demo data
+            for i in reversed(range(self.indicators_layout.count())):
+                child = self.indicators_layout.itemAt(i).widget()
+                if child:
+                    child.setParent(None)
             return
         
         self.status_label.setText("🔄 Fetching macro economic data...")
@@ -238,16 +276,6 @@ class MacroWidget(QWidget):
         self.data_thread.error_occurred.connect(self.on_error)
         self.data_thread.start()
     
-    def show_demo_data(self):
-        """Show demo data when API key is not available"""
-        demo_data = {
-            'DFF': {'name': 'Fed Funds Rate', 'units': '%', 'value': 5.25, 'date': '2024-10-01'},
-            'UNRATE': {'name': 'Unemployment Rate', 'units': '%', 'value': 3.8, 'date': '2024-09-01'},
-            'CPIAUCSL': {'name': 'CPI', 'units': 'Index', 'value': 308.2, 'date': '2024-09-01'},
-        }
-        self.on_data_ready(demo_data)
-        self.status_label.setText("📊 Demo data displayed (FRED API key needed for real data)")
-        self.status_label.setStyleSheet("color: #ff9800;")
     
     def on_data_ready(self, data):
         """Handle data ready from thread"""
@@ -263,7 +291,7 @@ class MacroWidget(QWidget):
         row = 0
         col = 0
         for series_id, indicator_data in data.items():
-            card = MacroIndicatorCard(indicator_data)
+            card = MacroIndicatorCard(indicator_data, series_id, on_click=self.open_indicator_chart)
             self.indicators_layout.addWidget(card, row, col)
             
             col += 1
@@ -287,9 +315,36 @@ class MacroWidget(QWidget):
         self.logger.error(f"Error fetching macro data: {error_message}")
         self.status_label.setText(f"❌ Error: {error_message}")
         self.status_label.setStyleSheet("color: #f44336;")
-        
-        # Show demo data on error
-        self.show_demo_data()
+        # Do not show demo data; leave indicators as-is or cleared on next refresh
+
+    def open_indicator_chart(self, series_id: str):
+        """Open a small chart dialog for the given FRED series from 2024-01-01 to today."""
+        if not self.fred_api_key:
+            self.status_label.setText("FRED API key required for charts")
+            self.status_label.setStyleSheet("color: #f44336;")
+            return
+        try:
+            from fredapi import Fred
+            fred = Fred(api_key=self.fred_api_key)
+            start_str = self.chart_start_date.strftime('%Y-%m-%d')
+            end_str = datetime.now().strftime('%Y-%m-%d')
+            series = fred.get_series(series_id, observation_start=start_str, observation_end=end_str)
+            if series is None or series.empty:
+                self.status_label.setText(f"No data available for {series_id}")
+                self.status_label.setStyleSheet("color: #ff9800;")
+                return
+            # Prepare dates and values
+            dates = [dt.date() for dt in series.index.to_pydatetime()]
+            values = series.values.tolist()
+            title = f"{series_id} • {start_str} → {end_str}"
+            dlg = GraphDialog(title, dates, values, parent=self)
+            dlg.exec()
+        except ImportError:
+            self.status_label.setText("fredapi or pyqtgraph not installed")
+            self.status_label.setStyleSheet("color: #f44336;")
+        except Exception as e:
+            self.status_label.setText(f"Chart error: {str(e)[:60]}…")
+            self.status_label.setStyleSheet("color: #f44336;")
 
     def closeEvent(self, event):
         """Ensure timers and threads are stopped when the widget closes."""

@@ -67,50 +67,54 @@ class IBKRService:
             # We'll try a simple, robust order that worked previously.
             tried_ports = []
             self.last_error = None
-            # Prefer an explicit env port if provided; otherwise try paper (7497) then live (7496)
+            # expose attempted ports for UI debugging
+            self.last_ports_tried = []
+            # Build list of ports to try in priority order:
+            # 1) Configured port (self.config.port)
+            # 2) Environment override IBKR_PORT
+            # 3) Fallbacks 7496, 7497
             env_port = None
             try:
                 env_port = int(os.getenv("IBKR_PORT", "")) if os.getenv("IBKR_PORT") else None
             except Exception:
                 env_port = None
-            if env_port:
-                # Try explicit env port, then fallback across common TWS/Gateway ports
-                ports_to_try = [
-                    env_port,
-                    # TWS live/paper
-                    7496 if env_port != 7496 else 7497,
-                    7497,
-                    # IB Gateway live/paper
-                    4001,
-                    4002,
-                ]
-            else:
-                # Default: try TWS paper/live then IB Gateway live/paper
-                ports_to_try = [7497, 7496, 4002, 4001]
+            ports_to_try = []
+            # Configured port first
+            if getattr(self.config, 'port', None):
+                ports_to_try.append(int(self.config.port))
+            # Environment next
+            if env_port is not None:
+                ports_to_try.append(env_port)
+            # Fallbacks
+            ports_to_try.extend([7496, 7497])
+            # Deduplicate while preserving order
+            seen = set()
+            ports_to_try = [p for p in ports_to_try if not (p in seen or seen.add(p))]
 
             for port in ports_to_try:
                 if port in tried_ports:
                     continue
                 tried_ports.append(port)
+                # track for external visibility
+                self.last_ports_tried.append(port)
                 try:
                     # Preflight: quick TCP port check to surface config/env problems faster
                     if not self._is_port_open(self.config.host, port, timeout=1.0):
                         msg = (
-                            f"Port {port} on {self.config.host} is closed. Ensure TWS/IB Gateway is running, "
+                            f"Port {port} on {self.config.host} is closed. Ensure TWS is running, "
                             f"API is enabled (Global Configuration > API > Settings), and Windows Firewall allows inbound on {port}."
                         )
                         self.logger.warning(msg)
                         self.last_error = msg
                         continue
                     self.logger.info(f"Connecting to IBKR at {self.config.host}:{port} (clientId={self.config.client_id})")
-                    if port in (4001, 4002):
-                        self.logger.info("Detected IB Gateway port; ensure Gateway is logged in and API is enabled. 'Read-Only' mode will prevent trading calls.")
-                    # Connect to IB Gateway or TWS
+                    # Connect to TWS only
+                    # Use a generous timeout to allow manual confirmation popups in TWS
                     self.ib.connect(
                         host=self.config.host,
                         port=port,
                         clientId=self.config.client_id,
-                        timeout=max(3, int(self.config.connect_timeout)),
+                        timeout=max(45, int(self.config.connect_timeout)),
                         readonly=False
                     )
                     self._connected = True
@@ -140,13 +144,27 @@ class IBKRService:
                             f"{msg} — The remote computer refused the connection. "
                             f"Start TWS/IBG and enable API; verify port {port} is open and not blocked by firewall."
                         )
+                    # Timeouts typically indicate the socket is open but TWS is waiting for user confirmation or API is not fully enabled
+                    try:
+                        import asyncio  # noqa: F401
+                        is_timeout = isinstance(e, TimeoutError) or 'TimeoutError' in f"{type(e)}"
+                    except Exception:
+                        is_timeout = 'Timeout' in msg
+                    if is_timeout:
+                        msg = (
+                            f"Connection timed out waiting for API handshake on port {port}. "
+                            f"If TWS shows 'Accept incoming connection?' please click Yes. "
+                            f"Also check Global Configuration > API > Settings: 'Enable ActiveX and Socket Clients' (checked), "
+                            f"Trusted IPs includes 127.0.0.1 or 'Allow connections from local machine', and Socket Port={port}."
+                        )
                     self.last_error = msg
                     self.logger.warning(f"Connect attempt failed on port {port}: {msg}")
                     if "Read-Only" in msg:
-                        self.logger.warning("IBKR API is in Read-Only mode. Disable Read-Only in TWS/Gateway API settings to place orders.")
+                        self.logger.warning("IBKR API is in Read-Only mode. Disable Read-Only in TWS API settings to place orders.")
                     self._connected = False
                     continue
-            self.logger.error(f"Failed to connect to IBKR. Last error: {self.last_error}")
+            tried = ', '.join(str(p) for p in tried_ports) if tried_ports else 'none'
+            self.logger.error(f"Failed to connect to IBKR (ports tried: {tried}). Last error: {self.last_error}")
             return False
         finally:
             self._connecting = False
@@ -545,10 +563,24 @@ class IBKRService:
         if self._account_updates_subscribed:
             return
         try:
-            # Use default signature to avoid version-specific arg mismatch (no account argument)
-            self.ib.reqAccountUpdates(True)
-            self.logger.info("Subscribed to account updates")
-            self._account_updates_subscribed = True
+            # Prefer subscribing with an explicit, valid account code if available
+            acct = (account_code or self.config.account_code or None)
+            if not acct:
+                try:
+                    accs = list(self.ib.managedAccounts() or [])
+                    acct = accs[0] if accs else ""
+                except Exception:
+                    acct = ""
+            try:
+                # Primary: include account code (common ib_insync signature)
+                self.ib.reqAccountUpdates(True, acct)
+                self.logger.info(f"Subscribed to account updates for account '{acct or 'ALL'}'")
+                self._account_updates_subscribed = True
+            except TypeError:
+                # Fallback: some versions accept only (subscribe: bool)
+                self.ib.reqAccountUpdates(True)
+                self.logger.info("Subscribed to account updates (no account arg)")
+                self._account_updates_subscribed = True
         except Exception as e:
             # Avoid spamming; log and continue so the app remains usable.
             self.logger.warning(f"Account updates subscription encountered an error: {e}")

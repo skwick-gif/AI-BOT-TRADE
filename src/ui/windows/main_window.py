@@ -19,9 +19,11 @@ from ui.widgets.ml_widget import MLWidget
 from ui.widgets.watchlist_widget import WatchlistWidget
 from ui.widgets.scanner_widget import ScannerWidget
 from ui.dialogs.api_keys_dialog import APIKeysDialog
+from ui.dialogs.data_update_dialog import DataUpdateDialog
 from ui.themes.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
 from services.ibkr_service import IBKRService
+from services.data_update_service import DataUpdateService
 from services.ai_service import AIService
 from utils.logger import get_logger
 from pathlib import Path
@@ -88,6 +90,16 @@ class MainWindow(QMainWindow):
         # Apply theme
         self.apply_theme()
         
+        # Start daily data update scheduler (runs in background; configurable from ML->Data tab)
+        try:
+            self.data_update_service = DataUpdateService()
+            # default schedule 01:30 local; dialog can change
+            from datetime import time as dtime
+            self.data_update_service.set_scheduled_time(dtime(hour=1, minute=30))
+            self.data_update_service.start()
+        except Exception as e:
+            self.logger.warning(f"Failed to start DataUpdateService: {e}")
+
         # Setup status update timer
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.update_status)
@@ -160,15 +172,26 @@ class MainWindow(QMainWindow):
         
         # Help Menu
         help_menu = menubar.addMenu("Help")
-        
+
         about_action = QAction("About", self)
-        about_action.triggered.connect(self.show_about)
+        about_action.triggered.connect(self.show_dashboard_about)
         help_menu.addAction(about_action)
 
         # AI Chat Guide (opens Markdown guide in a dialog)
         ai_guide_action = QAction("AI Chat Guide", self)
         ai_guide_action.triggered.connect(self.show_ai_chat_guide)
         help_menu.addAction(ai_guide_action)
+
+        # AI Trading Guide
+        ai_trading_action = QAction("AI Trading Guide", self)
+        ai_trading_action.triggered.connect(self.show_ai_trading_guide)
+        help_menu.addAction(ai_trading_action)
+
+        # Data menu for Daily Update dialog
+        data_menu = menubar.addMenu("Data")
+        daily_update_action = QAction("Daily Update…", self)
+        daily_update_action.triggered.connect(self.show_daily_update_dialog)
+        data_menu.addAction(daily_update_action)
     
     def create_toolbar(self):
         """Create toolbar"""
@@ -206,10 +229,24 @@ class MainWindow(QMainWindow):
         # Connect AI Trading signals
         if hasattr(self, 'ai_trading_widget'):
             self.ai_trading_widget.connect_ibkr_requested.connect(self.toggle_ibkr_connection)
+        # Connect Scanner -> Watchlist bridge
+        if hasattr(self, 'scanner_widget') and hasattr(self, 'watchlist_widget'):
+            try:
+                self.scanner_widget.add_to_watchlist.connect(self.on_add_from_scanner)
+            except Exception as e:
+                self.logger.warning(f"Failed to wire Scanner->Watchlist: {e}")
     
     def apply_theme(self):
         """Apply current theme"""
         self.theme_manager.apply_theme(self, self.config.ui.theme)
+
+    def show_daily_update_dialog(self):
+        try:
+            dlg = DataUpdateDialog(self, getattr(self, 'data_update_service', None))
+            dlg.setModal(False)
+            dlg.show()
+        except Exception as e:
+            QMessageBox.critical(self, "Daily Update", f"Failed to open dialog: {e}")
     
     def toggle_theme(self):
         """Toggle between light and dark theme"""
@@ -231,8 +268,96 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Connection Error", str(e))
     
     def auto_connect_ibkr(self):
-        """Auto-connect is disabled"""
-        self.logger.info("Auto-connect is disabled")
+        """Attempt to auto-connect to IBKR in a background thread (non-blocking)."""
+        try:
+            if self.ibkr_service and self.ibkr_service.is_connected():
+                return
+
+            if hasattr(self, 'connect_action'):
+                self.connect_action.setEnabled(False)
+                self.connect_action.setText("Connecting…")
+
+            # Create worker in a QThread to keep UI responsive
+            self._ibkr_thread = QThread(self)
+            self._ibkr_worker = IBKRConnectWorker(lambda: IBKRService(self.config.ibkr))
+            self._ibkr_worker.moveToThread(self._ibkr_thread)
+
+            # Wire signals
+            self._ibkr_thread.started.connect(self._ibkr_worker.run)
+            self._ibkr_worker.finished.connect(self.on_auto_connect_finished)
+            # Ensure thread stops after work
+            self._ibkr_worker.finished.connect(self._ibkr_thread.quit)
+
+            self._ibkr_thread.start()
+        except Exception as e:
+            self.logger.error(f"Auto-connect setup failed: {e}")
+            if hasattr(self, 'connect_action'):
+                self.connect_action.setEnabled(True)
+                self.connect_action.setText("Connect to IBKR")
+
+    def on_auto_connect_finished(self, success: bool, error: str):
+        """Handle completion of auto-connect worker."""
+        try:
+            # Adopt the service instance from worker if connected
+            if success and hasattr(self, '_ibkr_worker'):
+                self.ibkr_service = getattr(self._ibkr_worker, 'service', None)
+                # Wire services into widgets
+                if hasattr(self, 'dashboard_widget'):
+                    self.dashboard_widget.set_ibkr_service(self.ibkr_service)
+                if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
+                    self.ai_trading_widget.set_ibkr_status(True)
+                self.connection_status_changed.emit(True)
+                self.logger.info("Auto-connected to IBKR successfully")
+                if hasattr(self, 'connect_action'):
+                    self.connect_action.setText("Disconnect from IBKR")
+            else:
+                # Report error in status and optionally message box
+                detail = error or "Failed to connect to IBKR"
+                try:
+                    if hasattr(self, '_ibkr_worker') and getattr(self._ibkr_worker, 'service', None):
+                        svc = getattr(self._ibkr_worker, 'service')
+                        if getattr(svc, 'last_error', None):
+                            detail = svc.last_error
+                        ports = getattr(svc, 'last_ports_tried', None)
+                        if ports:
+                            detail = f"Ports tried: {ports}. Last error: {detail}"
+                except Exception:
+                    pass
+                self.logger.error(f"Auto-connect failed: {detail}")
+                self.connection_status_changed.emit(False)
+                # Keep it unobtrusive at startup: show in status bar, not a blocking dialog
+                if hasattr(self, 'status_bar'):
+                    self.status_bar.showMessage(f"IBKR auto-connect failed: {detail}", 10000)
+                # Also show a small MessageBox so it's visible on startup
+                try:
+                    QMessageBox.warning(self, "IBKR Auto-Connect Failed", detail)
+                except Exception:
+                    pass
+                if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_status(False)
+            
+        finally:
+            # Cleanup thread/worker
+            try:
+                if hasattr(self, '_ibkr_worker'):
+                    self._ibkr_worker.deleteLater()
+                    del self._ibkr_worker
+            except Exception:
+                pass
+            try:
+                if hasattr(self, '_ibkr_thread'):
+                    # If still running, let the quit signal stop it; wait a bit
+                    if self._ibkr_thread.isRunning():
+                        self._ibkr_thread.quit()
+                        self._ibkr_thread.wait(2000)
+                    del self._ibkr_thread
+            except Exception:
+                pass
+            if hasattr(self, 'connect_action'):
+                self.connect_action.setEnabled(True)
+                if not (self.ibkr_service and self.ibkr_service.is_connected()):
+                    self.connect_action.setText("Connect to IBKR")
 
     def connect_ibkr(self):
         """Connect to IBKR on the main thread (ib_insync prefers main Qt loop)."""
@@ -252,6 +377,7 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'dashboard_widget'):
                     self.dashboard_widget.set_ibkr_service(self.ibkr_service)
                 if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
                     self.ai_trading_widget.set_ibkr_status(True)
                 self.connection_status_changed.emit(True)
                 self.logger.info("Connected to IBKR successfully")
@@ -286,6 +412,7 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'dashboard_widget'):
                     self.dashboard_widget.set_ibkr_service(None)
                 if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_service(None)
                     self.ai_trading_widget.set_ibkr_status(False)
         except Exception as e:
             self.logger.error(f"Error disconnecting from IBKR: {e}")
@@ -335,22 +462,45 @@ class MainWindow(QMainWindow):
         from datetime import datetime
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.time_label.setText(current_time)
+
+    def on_add_from_scanner(self, symbol: str):
+        """Handle 'Add to Watchlist' requests coming from the Scanner tab."""
+        try:
+            if not symbol:
+                return
+            # Switch to Watchlist tab
+            if hasattr(self, 'watchlist_widget'):
+                idx = self.tab_widget.indexOf(self.watchlist_widget)
+                if idx != -1:
+                    self.tab_widget.setCurrentIndex(idx)
+                # Add/focus symbol in watchlist
+                self.watchlist_widget.add_symbol_from_scanner(symbol, switch_to_tab=True)
+        except Exception as e:
+            self.logger.error(f"Failed to handle add_from_scanner for {symbol}: {e}")
     
-    def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(
-            self,
-            "About AI Trading Bot",
-            "AI Trading Bot v2.0\\n\\n"
-            "A professional trading application with AI integration\\n"
-            "Built with PyQt6 and Interactive Brokers API\\n\\n"
-            "Features:\\n"
-            "• Real-time market data\\n"
-            "• AI-powered trading assistant\\n"
-            "• Machine learning models\\n"
-            "• Advanced portfolio management\\n"
-            "• Market scanning and watchlists"
-        )
+    def show_dashboard_about(self):
+        """Open the Dashboard ABOUT markdown in a dialog."""
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            md_path = project_root / "docs" / "DASHBOARD_ABOUT.md"
+            if md_path.exists():
+                text = md_path.read_text(encoding="utf-8")
+            else:
+                text = "Dashboard ABOUT file not found."
+        except Exception as e:
+            text = f"Error loading ABOUT: {e}"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About • Dashboard")
+        layout = QVBoxLayout(dlg)
+        browser = QTextBrowser()
+        browser.setReadOnly(True)
+        browser.setOpenExternalLinks(True)
+        # Minimal markdown display - QTextBrowser supports basics
+        browser.setMarkdown(text)
+        layout.addWidget(browser)
+        dlg.resize(840, 600)
+        dlg.exec()
 
     def show_ai_chat_guide(self):
         """Open the AI Chat guide (Markdown) in a right-to-left styled dialog"""
@@ -412,6 +562,35 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error opening AI Chat guide: {e}")
             QMessageBox.critical(self, "Guide Error", f"Failed to open guide:\n{e}")
+
+    def show_ai_trading_guide(self):
+        """Open the AI Trading guide (Markdown) in a dialog."""
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            guide_path = project_root / "docs" / "AI_TRADING_ABOUT.md"
+            if not guide_path.exists():
+                QMessageBox.warning(self, "Guide Not Found", f"Could not find guide at:\n{guide_path}")
+                return
+            text = guide_path.read_text(encoding="utf-8")
+            dlg = QDialog(self)
+            dlg.setWindowTitle("AI Trading Guide")
+            dlg.resize(840, 600)
+            browser = QTextBrowser(dlg)
+            browser.setReadOnly(True)
+            browser.setOpenExternalLinks(True)
+            try:
+                import markdown  # type: ignore
+                html_body = markdown.markdown(text, extensions=["extra", "sane_lists", "tables", "fenced_code"])
+                browser.setHtml(html_body)
+            except Exception:
+                browser.setMarkdown(text)
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(browser)
+            dlg.setLayout(layout)
+            dlg.exec()
+        except Exception as e:
+            self.logger.error(f"Error opening AI Trading guide: {e}")
+            QMessageBox.critical(self, "Guide Error", f"Failed to open AI Trading guide:\n{e}")
     
     def show_api_keys_dialog(self):
         """Show API keys configuration dialog"""

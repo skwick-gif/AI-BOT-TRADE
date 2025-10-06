@@ -1,3 +1,30 @@
+# Ignore data directories (raw and processed)
+data/
+"raw data"/
+stock_data/
+
+# Parquet and large binary data
+*.parquet
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Virtual envs
+env/
+venv/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Environment files
+.env
+
+# macOS
+.DS_Store
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

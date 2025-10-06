@@ -178,6 +178,21 @@ class DashboardWidget(QWidget):
 
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.setToolTip("Manually refresh all data from IBKR")
+        refresh_btn.setFixedSize(120, 30)
+        refresh_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0d7377;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #14a085;
+            }
+            """
+        )
         refresh_btn.clicked.connect(self.refresh_data)
         title_layout.addWidget(refresh_btn)
 
@@ -236,13 +251,13 @@ class DashboardWidget(QWidget):
         self.create_portfolio_summary()
         content_layout.addWidget(self.portfolio_frame)
 
-        # Macro indicators
+        # Macro + Calendar side-by-side to save space
+        mc_row = QHBoxLayout()
         self.macro_widget = MacroWidget()
-        content_layout.addWidget(self.macro_widget)
-
-        # Calendar section under Macro
         self.calendar_widget = CalendarWidget()
-        content_layout.addWidget(self.calendar_widget)
+        mc_row.addWidget(self.macro_widget, 1)
+        mc_row.addWidget(self.calendar_widget, 1)
+        content_layout.addLayout(mc_row)
 
         content_layout.addStretch()
 
@@ -308,7 +323,21 @@ class DashboardWidget(QWidget):
         
         # Sync button with better size
         sync_btn = QPushButton("🔄 Sync IBKR")
-        sync_btn.setMinimumSize(100, 30)  # Better size for readability
+        sync_btn.setFixedSize(120, 30)
+        sync_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #0d7377;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #14a085;
+            }
+            """
+        )
         sync_btn.setToolTip("Sync with IBKR positions")
         sync_btn.clicked.connect(self.sync_portfolio_data)  # Specific function
         title_layout.addWidget(sync_btn)
@@ -424,7 +453,7 @@ class DashboardWidget(QWidget):
             else:
                 activity_text = "❌ Not connected to IBKR\n"
                 activity_text += "Use Connection menu to connect\n"
-                activity_text += "Ensure TWS/Gateway is running\n"
+                activity_text += "Ensure TWS is running\n"
                 activity_text += f"🕒 Last check: {self.get_current_time()}"
                 
                 self.activity_label.setText(activity_text)

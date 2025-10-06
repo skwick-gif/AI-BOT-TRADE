@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QGroupBox, QLineEdit, QSpinBox, QDoubleSpinBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QSplitter, QFrame, QPlainTextEdit, QDialog,
-    QTabWidget, QFormLayout, QListWidget, QListWidgetItem, QMessageBox
+    QTabWidget, QFormLayout, QListWidget, QListWidgetItem, QMessageBox, QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from concurrent.futures import ThreadPoolExecutor
@@ -145,9 +145,8 @@ class AiTradingWidget(QWidget):
 
     # ---- Public hooks for future wiring ----
     def set_ibkr_service(self, service):
-        """Placeholder to receive IBKR service later."""
-        # No-op in skeleton
-        pass
+        """Receive IBKR service instance for live execution."""
+        self._ibkr_service = service
 
     def set_ai_service(self, service: AIService):
         self._ai_service = service
@@ -408,8 +407,17 @@ class AiTradingWidget(QWidget):
         st_layout.addRow(self._set_hours)
         st_layout.addRow("Daily loss limit", self._set_daily_loss)
         st_layout.addRow("Max trades / day", self._set_max_trades)
+        # Perplexity custom prompt
+        self._use_custom_prompt = QCheckBox("Use custom Perplexity prompt")
+        self._use_custom_prompt.setChecked(self._cfg.config.globals.use_custom_prompt)
+        st_layout.addRow(self._use_custom_prompt)
+        self._custom_prompt_edit = QTextEdit(); self._custom_prompt_edit.setPlaceholderText("Enter the exact prompt to send every interval, e.g. 'Score TNA on a 0-10 scale for intraday momentum. Output only a number.'")
+        self._custom_prompt_edit.setPlainText(self._cfg.config.globals.custom_prompt or "")
+        st_layout.addRow("Custom prompt", self._custom_prompt_edit)
         self._save_settings_btn = QPushButton("Save Settings"); self._save_settings_btn.clicked.connect(self._save_settings)
-        st_btn_row = QHBoxLayout(); st_btn_row.addStretch(); st_btn_row.addWidget(self._save_settings_btn)
+        self._test_prompt_btn = QPushButton("Test Prompt Now"); self._test_prompt_btn.clicked.connect(self._test_custom_prompt)
+        self._insert_template_btn = QPushButton("Insert template"); self._insert_template_btn.clicked.connect(self._insert_recommended_prompt)
+        st_btn_row = QHBoxLayout(); st_btn_row.addStretch(); st_btn_row.addWidget(self._save_settings_btn); st_btn_row.addWidget(self._test_prompt_btn); st_btn_row.addWidget(self._insert_template_btn)
         settings_v = QVBoxLayout(settings_tab)
         settings_v.addLayout(st_layout)
         settings_v.addLayout(st_btn_row)
@@ -650,7 +658,23 @@ class AiTradingWidget(QWidget):
                     "buy_threshold": float(strat.buy_threshold),
                     "sell_threshold": float(strat.sell_threshold),
                 }
-            score = float(self._ai_service.score_symbol_numeric_sync(symbol, profile=prof, thresholds=thresholds))
+            if self._cfg.config.globals.use_custom_prompt and (self._cfg.config.globals.custom_prompt or "").strip():
+                cp = (self._cfg.config.globals.custom_prompt or "")
+                # Fill placeholders
+                cp = cp.replace("{symbol}", symbol)
+                prof_txt = (prof or "Intraday")
+                cp = cp.replace("{profile}", str(prof_txt))
+                if asset:
+                    try:
+                        bt = float(strat.buy_threshold)
+                        st = float(strat.sell_threshold)
+                        cp = cp.replace("{buy}", f"{bt:.1f}")
+                        cp = cp.replace("{sell}", f"{st:.1f}")
+                    except Exception:
+                        pass
+                score = float(self._ai_service.score_with_custom_prompt_numeric_sync(cp))
+            else:
+                score = float(self._ai_service.score_symbol_numeric_sync(symbol, profile=prof, thresholds=thresholds))
             self.score_ready.emit(symbol, score, None)
         except Exception as e:
             self.score_ready.emit(symbol, 0.0, e)
@@ -716,6 +740,16 @@ class AiTradingWidget(QWidget):
             self._set_status(symbol, decision)
             self._update_score_and_panel(symbol, score, decision)
             self._append_log(f"[{symbol}] decision={decision} score={score} (cooldown {strat.cooldown_min}m)")
+            # Execute action according to mode (Paper/Live)
+            try:
+                self._execute_decision(symbol, decision, int(asset.quantity), strat)
+            except Exception as ex:
+                self._append_log(f"[{symbol}] execution error: {ex}")
+            # Execute trade/paper-trade according to mode
+            try:
+                self._execute_decision(symbol, decision, int(asset.quantity), strat)
+            except Exception as ex:
+                self._append_log(f"[{symbol}] execution error: {ex}")
         else:
             phase = f"{signal} ({st['h_count']}/{needed})"
             self._set_status(symbol, phase)
@@ -906,10 +940,44 @@ class AiTradingWidget(QWidget):
             daily_loss_limit=self._set_daily_loss.value(),
             max_trades_day=self._set_max_trades.value(),
         )
+        # Save custom prompt flags
+        self._cfg.config.globals.use_custom_prompt = self._use_custom_prompt.isChecked()
+        self._cfg.config.globals.custom_prompt = self._custom_prompt_edit.toPlainText().strip()
+        self._cfg.save()
         # reflect in top bar too
         self._mode_combo.setCurrentText(self._cfg.config.globals.mode)
         self._global_interval_combo.setCurrentText(self._cfg.config.globals.interval)
         self._hours_only.setChecked(self._cfg.config.globals.trading_hours_only)
+
+    def _test_custom_prompt(self):
+        if not hasattr(self, "_ai_service") or not self._ai_service:
+            QMessageBox.warning(self, "AI Service", "AI service not configured.")
+            return
+        use_cp = self._use_custom_prompt.isChecked()
+        prompt = self._custom_prompt_edit.toPlainText().strip()
+        if use_cp and not prompt:
+            QMessageBox.information(self, "Custom Prompt", "Please enter a custom prompt or uncheck 'Use custom prompt'.")
+            return
+        # Run once against the first enabled asset or the typed symbol
+        symbol = None
+        for a in self._cfg.config.assets:
+            if a.enabled:
+                symbol = a.symbol; break
+        if not symbol:
+            symbol = self._symbol_edit.text().strip().upper() or "AAPL"
+        try:
+            if use_cp:
+                # Minimal numeric result expected; reuse numeric endpoint but override prompt
+                val = self._ai_service.score_with_custom_prompt_numeric_sync(prompt)
+                self._append_log(f"[TEST] Custom prompt → {val}")
+                QMessageBox.information(self, "Prompt Test", f"Numeric response: {val}")
+            else:
+                # Default numeric scoring for the symbol
+                val = self._ai_service.score_symbol_numeric_sync(symbol)
+                self._append_log(f"[TEST] Default scoring for {symbol} → {val}")
+                QMessageBox.information(self, "Prompt Test", f"{symbol}: {val}")
+        except Exception as e:
+            QMessageBox.critical(self, "Prompt Test", str(e))
 
     # top bar change handlers
     def _on_mode_changed(self, text: str):
@@ -920,3 +988,71 @@ class AiTradingWidget(QWidget):
 
     def _on_hours_toggled(self, checked: bool):
         self._cfg.update_globals(trading_hours_only=checked)
+
+    def _insert_recommended_prompt(self):
+        """Insert a recommended numeric-only prompt template with placeholders."""
+        template = (
+            "Score the opportunity for '{symbol}' on a 0-10 scale for {profile} trading horizon. "
+            "Focus on price action, momentum, and near-term catalysts. "
+            "Calibrate internally with thresholds BUY≥{buy} and SELL≤{sell}, "
+            "but output ONLY the number (0-10). No text, no code, no units."
+        )
+        self._custom_prompt_edit.setPlainText(template)
+
+    # ---- Execution helpers ----
+    def _execute_decision(self, symbol: str, decision: str, qty: int, strat: Strategy):
+        if decision not in ("BUY", "SELL"):
+            return
+        mode = (self._cfg.config.globals.mode or "Paper").strip()
+        if mode.lower() == "paper":
+            # Simulated trade using current price via yfinance
+            try:
+                from utils.trading_helpers import get_current_price, update_portfolio
+                price = get_current_price(symbol)
+                if price is None:
+                    self._append_log(f"[{symbol}] Paper trade skipped: no price")
+                    return
+                update_portfolio(symbol, decision, qty, float(price))
+                self._append_log(f"[{symbol}] Paper trade: {decision} {qty} @ {price:.2f}")
+            except Exception as e:
+                self._append_log(f"[{symbol}] Paper trade error: {e}")
+            return
+        # Live: require IBKR service
+        if not hasattr(self, "_ibkr_service") or not getattr(self, "_ibkr_service", None):
+            self._append_log(f"[{symbol}] Live trade skipped: IBKR not connected")
+            return
+        try:
+            from utils.ibkr_trading_helpers import booktrade_ibkr
+            res = booktrade_ibkr(symbol, qty, decision, order_type="MKT", ibkr_service=self._ibkr_service)
+            self._append_log(f"[{symbol}] Live trade result: {res.success} {res.message}")
+        except Exception as e:
+            self._append_log(f"[{symbol}] Live trade error: {e}")
+
+    # ---- Execution helpers ----
+    def _execute_decision(self, symbol: str, decision: str, qty: int, strat: Strategy):
+        if decision not in ("BUY", "SELL"):
+            return
+        mode = (self._cfg.config.globals.mode or "Paper").strip()
+        if mode.lower() == "paper":
+            # Simulated trade using current price via yfinance
+            try:
+                from utils.trading_helpers import get_current_price, update_portfolio
+                price = get_current_price(symbol)
+                if price is None:
+                    self._append_log(f"[{symbol}] Paper trade skipped: no price")
+                    return
+                update_portfolio(symbol, decision, qty, float(price))
+                self._append_log(f"[{symbol}] Paper trade: {decision} {qty} @ {price:.2f}")
+            except Exception as e:
+                self._append_log(f"[{symbol}] Paper trade error: {e}")
+            return
+        # Live: require IBKR service
+        if not hasattr(self, "_ibkr_service") or not self._ibkr_service:
+            self._append_log(f"[{symbol}] Live trade skipped: IBKR not connected")
+            return
+        try:
+            from utils.ibkr_trading_helpers import booktrade_ibkr
+            res = booktrade_ibkr(symbol, qty, decision, order_type="MKT", ibkr_service=self._ibkr_service)
+            self._append_log(f"[{symbol}] Live trade result: {res.success} {res.message}")
+        except Exception as e:
+            self._append_log(f"[{symbol}] Live trade error: {e}")

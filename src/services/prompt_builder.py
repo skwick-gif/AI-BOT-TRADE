@@ -31,13 +31,13 @@ def build_numeric_score_prompt(
     p = (profile or "").strip().lower()
 
     if p == "intraday":
-        focus = "intraday horizon (today, next hours). Focus on price action/momentum. Ignore long-term factors."
+        focus = "for intraday trading horizon (today, next hours). Focus on price action, momentum, and near-term catalysts. Ignore long-term factors."
     elif p == "swing":
-        focus = "swing horizon (days to weeks). Consider trend and catalysts."
+        focus = "for swing trading horizon (days to weeks). Consider trend, momentum, and upcoming catalysts."
     elif p == "long-term" or p == "long term":
-        focus = "long-term horizon (months). Emphasize fundamentals and macro."
+        focus = "for long-term horizon (months+). Emphasize fundamentals and macro context."
     else:
-        focus = "short-term trading horizon."
+        focus = "for short-term trading horizon."
 
     ctx = _trim_context(market_context)
     ctx_line = f"Context:{ctx}\n" if ctx else ""
@@ -48,12 +48,12 @@ def build_numeric_score_prompt(
             bt = thresholds.get("buy_threshold")
             st = thresholds.get("sell_threshold")
             if bt is not None and st is not None:
-                thr_line = f" Use thresholds: BUY≥{float(bt):.1f}, SELL≤{float(st):.1f}."
+                thr_line = f" Calibrate internally with thresholds BUY≥{float(bt):.1f} and SELL≤{float(st):.1f}."
         except Exception:
             thr_line = ""
 
     # Keep it ultra-compact to minimize tokens
     return (
-        f"{ctx_line}Score the opportunity for '{sym}' on 0-10, {focus}{thr_line} "
+        f"{ctx_line}Score the opportunity for '{sym}' on a 0-10 scale {focus}{thr_line} "
         f"Output ONLY the number (0-10). No text, no code, no units."
     )

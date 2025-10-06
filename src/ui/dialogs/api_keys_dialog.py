@@ -197,7 +197,7 @@ class APIKeysDialog(QDialog):
             "• Host: Usually 127.0.0.1 (localhost)\n"
             "• Port: 7497 for paper trading, 7496 for live trading\n"
             "• Client ID: Unique identifier (1-999)\n"
-            "• Make sure TWS/Gateway is running with API enabled"
+            "• Make sure TWS is running with API enabled"
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #666; font-style: italic;")

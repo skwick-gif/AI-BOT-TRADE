@@ -13,7 +13,7 @@ src_path = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_path))
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon, QFont
 
 from ui.windows.main_window import MainWindow
@@ -56,13 +56,17 @@ def main():
         
         # Create and setup application
         app = setup_application()
-        
+
         # Create main window
         main_window = MainWindow()
-        main_window.show()
-        
+        # Start in fullscreen-like mode (maximized for better Windows UX)
+        main_window.showMaximized()
+
+        # Auto-connect to IBKR shortly after UI shows (non-blocking; tries 7496 then 7497)
+        QTimer.singleShot(800, main_window.auto_connect_ibkr)
+
         logger.info("Application started successfully")
-        
+
         # Start event loop
         sys.exit(app.exec())
         

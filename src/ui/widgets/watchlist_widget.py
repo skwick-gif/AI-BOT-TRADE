@@ -398,6 +398,45 @@ class WatchlistWidget(QWidget):
         self.update_timer.start(self.config.ui.update_interval)
         
         self.logger.info("Watchlist widget initialized")
+
+    def add_symbol_from_scanner(self, symbol: str, switch_to_tab: bool = False):
+        """Public method to add a symbol coming from external widgets (e.g., Scanner).
+        Adds the symbol if missing, restarts monitoring to include it, and focuses/selects it.
+        """
+        try:
+            if not symbol:
+                return
+            sym = symbol.strip().upper()
+            if not sym:
+                return
+
+            # Try to add (no-op if already present)
+            added = self.watchlist_table.add_symbol(sym)
+
+            # Update monitoring universe
+            symbols = self.watchlist_table.get_symbols()
+            if hasattr(self, 'data_worker'):
+                self.data_worker.stop_monitoring()
+                if symbols:
+                    self.data_worker.start_monitoring(symbols)
+
+            # Focus/select the symbol row if present
+            if sym in self.watchlist_table.symbol_data:
+                row = self.watchlist_table.symbol_data[sym]['row']
+                self.watchlist_table.clearSelection()
+                self.watchlist_table.selectRow(row)
+                # Update details immediately if we have cached data
+                data = self.watchlist_table.symbol_data[sym].get('data') if isinstance(self.watchlist_table.symbol_data.get(sym), dict) else None
+                if data:
+                    self.details_panel.update_details(sym, data)
+                else:
+                    # Ensure details title reflects selection even before data arrives
+                    self.details_panel.title_label.setText(f"{sym} Details")
+                    self.details_panel.symbol_label.setText(f"Symbol: {sym}")
+
+            self.logger.info(f"Symbol {'added' if added else 'already in'} watchlist via Scanner: {sym}")
+        except Exception as e:
+            self.logger.error(f"Failed to add symbol from scanner: {symbol} | {e}")
     
     def setup_ui(self):
         """Setup the watchlist UI"""

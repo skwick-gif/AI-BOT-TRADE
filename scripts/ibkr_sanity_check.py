@@ -32,12 +32,18 @@ print(f"[SANITY] Connected: {ib.isConnected()}")
 accounts = list(ib.managedAccounts() or [])
 print(f"[SANITY] Managed accounts: {accounts}")
 
-# Subscribe to account updates using the signature compatible across ib_insync versions
+# Subscribe to account updates using an explicit valid account code when possible
 try:
-    ib.reqAccountUpdates(True)
-    print("[SANITY] Subscribed to account updates")
-except TypeError as te:
-    print(f"[SANITY] Account updates subscription signature mismatch: {te}; proceeding without explicit subscription.")
+    acct = accounts[0] if accounts else ""
+    try:
+        ib.reqAccountUpdates(True, acct)
+        print(f"[SANITY] Subscribed to account updates for account '{acct or 'ALL'}'")
+    except TypeError as te:
+        # Fallback for ib_insync builds that only accept (subscribe: bool)
+        ib.reqAccountUpdates(True)
+        print("[SANITY] Subscribed to account updates (no account arg)")
+except Exception as e:
+    print(f"[SANITY] Account updates subscription error: {e}")
 
 # Give IB a moment to populate summary/portfolio internally
 ib.sleep(1.0)
