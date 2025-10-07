@@ -37,3 +37,7 @@ class TrainingConfig:
     ])
     features: FeatureTechnicalConfig = field(default_factory=FeatureTechnicalConfig)
     target: TargetConfig = field(default_factory=TargetConfig)
+    # Feature toggles controlled from UI
+    use_technical: bool = True
+    use_volume: bool = True
+    use_sentiment: bool = False

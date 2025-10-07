@@ -273,6 +273,11 @@ class MainWindow(QMainWindow):
             if self.ibkr_service and self.ibkr_service.is_connected():
                 return
 
+            # Check if another connection attempt is already in progress
+            if hasattr(self, '_ibkr_thread') and self._ibkr_thread.isRunning():
+                self.logger.info("IBKR connection attempt already in progress")
+                return
+
             if hasattr(self, 'connect_action'):
                 self.connect_action.setEnabled(False)
                 self.connect_action.setText("Connecting…")
@@ -359,20 +364,12 @@ class MainWindow(QMainWindow):
                 if not (self.ibkr_service and self.ibkr_service.is_connected()):
                     self.connect_action.setText("Connect to IBKR")
 
-    def connect_ibkr(self):
-        """Connect to IBKR on the main thread (ib_insync prefers main Qt loop)."""
+    def on_manual_connect_finished(self, success: bool, error: str):
+        """Handle completion of manual connect worker."""
         try:
-            if hasattr(self, 'connect_action'):
-                self.connect_action.setEnabled(False)
-                self.connect_action.setText("Connecting…")
-
-            # Ensure service exists (create on main thread)
-            if not self.ibkr_service:
-                from services.ibkr_service import IBKRService
-                self.ibkr_service = IBKRService(self.config.ibkr)
-
-            success = self.ibkr_service.connect()
-            if success:
+            # Adopt the service instance from worker if connected
+            if success and hasattr(self, '_ibkr_worker'):
+                self.ibkr_service = getattr(self._ibkr_worker, 'service', None)
                 # Wire services into widgets
                 if hasattr(self, 'dashboard_widget'):
                     self.dashboard_widget.set_ibkr_service(self.ibkr_service)
@@ -384,22 +381,79 @@ class MainWindow(QMainWindow):
                 if hasattr(self, 'connect_action'):
                     self.connect_action.setText("Disconnect from IBKR")
             else:
-                detail = "Failed to connect to IBKR"
+                # Report error with user-friendly message box
+                detail = error or "Failed to connect to IBKR"
                 try:
-                    if self.ibkr_service and getattr(self.ibkr_service, 'last_error', None):
-                        detail = self.ibkr_service.last_error
+                    if hasattr(self, '_ibkr_worker') and getattr(self._ibkr_worker, 'service', None):
+                        svc = getattr(self._ibkr_worker, 'service')
+                        if getattr(svc, 'last_error', None):
+                            detail = svc.last_error
+                        ports = getattr(svc, 'last_ports_tried', None)
+                        if ports:
+                            detail = f"Ports tried: {ports}. Last error: {detail}"
                 except Exception:
                     pass
-                self.logger.error(f"IBKR connection failed: {detail}")
+                self.logger.error(f"Manual connect failed: {detail}")
+                self.connection_status_changed.emit(False)
+                # Show blocking error dialog for manual connection attempts
                 QMessageBox.critical(self, "Connection Error", f"Failed to connect to IBKR.\n{detail}")
                 if hasattr(self, 'ai_trading_widget'):
                     self.ai_trading_widget.set_ibkr_status(False)
-        except Exception as e:
-            self.logger.error(f"IBKR connection error: {e}")
-            QMessageBox.critical(self, "Connection Error", f"IBKR connect error:\n{e}")
+
         finally:
+            # Cleanup thread/worker
+            try:
+                if hasattr(self, '_ibkr_worker'):
+                    self._ibkr_worker.deleteLater()
+                    del self._ibkr_worker
+            except Exception:
+                pass
+            try:
+                if hasattr(self, '_ibkr_thread'):
+                    # If still running, let the quit signal stop it; wait a bit
+                    if self._ibkr_thread.isRunning():
+                        self._ibkr_thread.quit()
+                        self._ibkr_thread.wait(2000)
+                    del self._ibkr_thread
+            except Exception:
+                pass
             if hasattr(self, 'connect_action'):
                 self.connect_action.setEnabled(True)
+                if not (self.ibkr_service and self.ibkr_service.is_connected()):
+                    self.connect_action.setText("Connect to IBKR")
+
+    def connect_ibkr(self):
+        """Connect to IBKR in a background thread (non-blocking)."""
+        try:
+            if self.ibkr_service and self.ibkr_service.is_connected():
+                return
+
+            # Check if another connection attempt is already in progress
+            if hasattr(self, '_ibkr_thread') and self._ibkr_thread.isRunning():
+                self.logger.info("IBKR connection attempt already in progress")
+                return
+
+            if hasattr(self, 'connect_action'):
+                self.connect_action.setEnabled(False)
+                self.connect_action.setText("Connecting…")
+
+            # Create worker in a QThread to keep UI responsive
+            self._ibkr_thread = QThread(self)
+            self._ibkr_worker = IBKRConnectWorker(lambda: IBKRService(self.config.ibkr))
+            self._ibkr_worker.moveToThread(self._ibkr_thread)
+
+            # Wire signals
+            self._ibkr_thread.started.connect(self._ibkr_worker.run)
+            self._ibkr_worker.finished.connect(self.on_manual_connect_finished)
+            # Ensure thread stops after work
+            self._ibkr_worker.finished.connect(self._ibkr_thread.quit)
+
+            self._ibkr_thread.start()
+        except Exception as e:
+            self.logger.error(f"Manual connect setup failed: {e}")
+            if hasattr(self, 'connect_action'):
+                self.connect_action.setEnabled(True)
+                self.connect_action.setText("Connect to IBKR")
 
     def disconnect_ibkr(self):
         """Disconnect from IBKR"""

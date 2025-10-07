@@ -62,8 +62,8 @@ def main():
         # Start in fullscreen-like mode (maximized for better Windows UX)
         main_window.showMaximized()
 
-        # Auto-connect to IBKR shortly after UI shows (non-blocking; tries 7496 then 7497)
-        QTimer.singleShot(800, main_window.auto_connect_ibkr)
+        # Auto-connect disabled by user request
+        # QTimer.singleShot(800, main_window.auto_connect_ibkr)
 
         logger.info("Application started successfully")
 

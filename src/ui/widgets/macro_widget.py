@@ -194,8 +194,8 @@ class MacroWidget(QWidget):
         self.setup_ui()
         self.setup_timer()
         
-        # Start data fetch
-        self.refresh_data()
+        # Don't start data fetch immediately - wait for user interaction or timer
+        # self.refresh_data()  # Removed to prevent blocking app startup
 
         # Default chart range start (per request)
         self.chart_start_date = datetime(2024, 1, 1)
@@ -248,11 +248,11 @@ class MacroWidget(QWidget):
         main_layout.addStretch()
     
     def setup_timer(self):
-        """Setup automatic refresh timer"""
+        """Setup automatic refresh timer - starts only after first manual refresh"""
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_data)
-        # Refresh every 30 minutes
-        self.refresh_timer.start(30 * 60 * 1000)
+        # Don't start timer automatically - wait for first manual refresh
+        # self.refresh_timer.start(30 * 60 * 1000)  # 30 minutes
     
     def refresh_data(self):
         """Refresh macro economic data"""
@@ -275,6 +275,10 @@ class MacroWidget(QWidget):
         self.data_thread.data_ready.connect(self.on_data_ready)
         self.data_thread.error_occurred.connect(self.on_error)
         self.data_thread.start()
+        
+        # Start timer after first refresh (if not already started)
+        if not self.refresh_timer.isActive():
+            self.refresh_timer.start(30 * 60 * 1000)  # 30 minutes
     
     
     def on_data_ready(self, data):

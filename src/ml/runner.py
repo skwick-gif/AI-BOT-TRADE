@@ -197,6 +197,7 @@ def walk_forward_run(
             best_score = -np.inf if cfg.target.type == "classification" else np.inf
             best_name = None
             best_pred = None
+            best_proba = None
 
             per_model_scores: List[Tuple[str, float, Any]] = []  # (name, score, y_hat)
             for name, pipe in pipes.items():
@@ -211,11 +212,18 @@ def walk_forward_run(
                         y_test = y_test.astype(str)
                     pipe.fit(X_train, y_train)
                     y_hat = pipe.predict(X_test)
+                    y_prob = None
+                    try:
+                        # try to extract probabilities for classification
+                        if cfg.target.type == "classification" and hasattr(pipe, "predict_proba"):
+                            y_prob = pipe.predict_proba(X_test)
+                    except Exception:
+                        y_prob = None
                     score = score_fn(y_test, y_hat)
                     per_model_scores.append((name, float(score), y_hat))
                     if cfg.target.type == "classification":
                         if score > best_score:
-                            best_score, best_name, best_pred = score, name, y_hat
+                            best_score, best_name, best_pred, best_proba = score, name, y_hat, y_prob
                     else:
                         if score < best_score:
                             best_score, best_name, best_pred = score, name, y_hat
@@ -247,10 +255,46 @@ def walk_forward_run(
             ))
 
             # store predictions frame
-            out = t_test[["ticker", "date"]].copy()
+            out = t_test[["ticker", "date", "close", "adj_close"] if "adj_close" in t_test.columns else ["ticker", "date", "close"]].copy()
             out["y_true"] = t_test[y_col].values
             out["y_pred"] = best_pred
             out["model"] = best_name
+            # Confidence and price target (classification only)
+            if cfg.target.type == "classification":
+                # estimate confidence from probabilities if available
+                conf = None
+                try:
+                    if best_proba is not None:
+                        # map class order to labels if available
+                        classes = None
+                        try:
+                            classes = pipe.named_steps.get(best_name).classes_  # type: ignore
+                        except Exception:
+                            classes = ["DOWN", "HOLD", "UP"]
+                        # fallback: assume order is alphabetical; we map by label index
+                        label_to_idx = {str(lbl): i for i, lbl in enumerate(classes)} if classes is not None else {"DOWN": 0, "HOLD": 1, "UP": 2}
+                        idxs = [label_to_idx.get(str(lbl), 1) for lbl in best_pred]
+                        conf = [float(best_proba[i, idx]) if best_proba is not None and i < len(best_proba) and idx < best_proba.shape[1] else 0.0 for i, idx in enumerate(idxs)]
+                except Exception:
+                    conf = None
+                if conf is None:
+                    # fallback confidence: 1.0 for agreement with majority class in window (weak)
+                    conf = [0.5] * len(out)
+                out["confidence"] = conf
+                # price target: shift close based on class and simple expected move
+                base_price = out["adj_close"] if "adj_close" in out.columns else out["close"]
+                pt = []
+                for i, pred in enumerate(out["y_pred"].astype(str)):
+                    c = float(out["confidence"].iloc[i]) if "confidence" in out.columns else 0.5
+                    # map class to directional factor; scale by ATR or historical sigma if available later
+                    if pred == "UP":
+                        delta = 0.01 * max(0.5, c)  # +1% scaled by confidence (>=0.5)
+                    elif pred == "DOWN":
+                        delta = -0.01 * max(0.5, c)
+                    else:
+                        delta = 0.0
+                    pt.append(float(base_price.iloc[i]) * (1.0 + delta))
+                out["price_target"] = pt
             preds_by_h[str(h)].append(out)
 
             # confusion counts (classification only)

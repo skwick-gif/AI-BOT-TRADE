@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 class IBKRConfig:
     """IBKR Configuration"""
     host: str = "127.0.0.1"
-    port: int = 7497  # TWS Paper Trading
+    port: int = 4001  # IB Gateway (was 7497 for TWS Paper Trading)
     client_id: int = 1
     connect_timeout: int = 10
     request_timeout: int = 30
@@ -91,7 +91,7 @@ class ConfigManager:
         """Load IBKR configuration from environment"""
         return IBKRConfig(
             host=os.getenv("IBKR_HOST", "127.0.0.1"),
-            port=self._get_int("IBKR_PORT", 7497),
+            port=self._get_int("IBKR_PORT", 4001),  # IB Gateway default
             client_id=self._get_int("IBKR_CLIENT_ID", 1),
             connect_timeout=self._get_int("IBKR_CONNECT_TIMEOUT", 10),
             request_timeout=self._get_int("IBKR_REQUEST_TIMEOUT", 30),
@@ -118,8 +118,11 @@ class ConfigManager:
     
     def _load_ui_config(self) -> UIConfig:
         """Load UI configuration from environment"""
-        ds_raw = os.getenv("DEFAULT_SYMBOLS", "AAPL,MSFT,GOOGL,TSLA,NVDA")
-        default_symbols = [s for s in ds_raw.split(",") if s.strip()] or ["AAPL","MSFT","GOOGL","TSLA","NVDA"]
+        # By default do not seed the watchlist with hardcoded tickers.
+        # Users can set DEFAULT_SYMBOLS in their environment or .env if they
+        # want an initial list (comma-separated). If not set, start empty.
+        ds_raw = os.getenv("DEFAULT_SYMBOLS", "")
+        default_symbols = [s.strip().upper() for s in ds_raw.split(",") if s.strip()] if ds_raw else []
         
         return UIConfig(
             theme=os.getenv("UI_THEME", "dark"),

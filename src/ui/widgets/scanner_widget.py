@@ -299,6 +299,18 @@ class ScannerWorker(QObject):
             allowed_tickers = None
             pred_info_map = {}
             ml_preds_path = criteria.get("ml_preds_path")
+            # Consider ML universe CSV first if requested
+            try:
+                if bool(criteria.get("use_universe_csv")):
+                    from pathlib import Path as _P
+                    uni = _P("data/silver/universe.csv")
+                    if uni.exists():
+                        udf = pd.read_csv(uni)
+                        if 'ticker' in udf.columns:
+                            allowed_tickers = set(udf['ticker'].astype(str).str.upper().unique())
+                            self.status_updated.emit(f"Using ML universe.csv: {len(allowed_tickers)} tickers")
+            except Exception:
+                pass
             if ml_preds_path:
                 try:
                     preds_all = pd.read_parquet(ml_preds_path)
@@ -333,9 +345,11 @@ class ScannerWorker(QObject):
                     # Limit universe to UP if available
                     if 'y_pred' in preds_all.columns:
                         up_df = preds_all[preds_all['y_pred'].astype(str) == 'UP']
-                        allowed_tickers = set(up_df['ticker'].astype(str).str.upper().unique())
+                        allowed_set = set(up_df['ticker'].astype(str).str.upper().unique())
                     else:
-                        allowed_tickers = set(preds_all['ticker'].astype(str).str.upper().unique())
+                        allowed_set = set(preds_all['ticker'].astype(str).str.upper().unique())
+                    # If universe already set from CSV, intersect; otherwise take allowed_set
+                    allowed_tickers = allowed_set if allowed_tickers is None else (allowed_tickers & allowed_set)
                     self.status_updated.emit(f"Using ML predictions universe: {len(allowed_tickers)} tickers")
                 except Exception as ie:
                     self.logger.warning(f"Failed to load ML preds {ml_preds_path}: {ie}")
@@ -956,20 +970,35 @@ class ScanCriteriaWidget(QFrame):
         """Setup criteria UI"""
         self.setFrameStyle(QFrame.Shape.Box)
         layout = QVBoxLayout(self)
-
-        # Create tabs for different criteria types (back to tabs as before)
-        self.criteria_tabs = QTabWidget()
-        # Price & Volume Tab
+        # Create criteria panels and show side-by-side using a splitter
         self.create_price_volume_tab()
-        self.criteria_tabs.addTab(self.price_volume_widget, "💰 Price & Volume")
-        # Technical Tab
         self.create_technical_tab()
-        self.criteria_tabs.addTab(self.technical_widget, "📈 Technical")
+        from PyQt6.QtWidgets import QSplitter
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.price_volume_widget)
+        splitter.addWidget(self.technical_widget)
+        splitter.setSizes([380, 380])
 
-        # Group: Scan Criteria (wrap tabs)
+        # Also keep a tab fallback (hidden by default) for narrow windows.
+        # Do NOT add the same widgets to the QTabWidget (that would reparent them
+        # and leave the splitter empty). Instead add lightweight placeholder
+        # pages that point users to the compact tab view when activated.
+        self.criteria_tabs = QTabWidget()
+        tab_price = QWidget()
+        tab_price.setLayout(QVBoxLayout(tab_price))
+        tab_price.layout().addWidget(QLabel("Price & Volume (compact tab view)"))
+        tab_tech = QWidget()
+        tab_tech.setLayout(QVBoxLayout(tab_tech))
+        tab_tech.layout().addWidget(QLabel("Technical (compact tab view)"))
+        self.criteria_tabs.addTab(tab_price, "💰 Price & Volume")
+        self.criteria_tabs.addTab(tab_tech, "📈 Technical")
+
+        # Group: Scan Criteria (wrap splitter)
         criteria_group = QGroupBox("Scan Criteria")
         cg_layout = QVBoxLayout(criteria_group)
+        cg_layout.addWidget(splitter)
         cg_layout.addWidget(self.criteria_tabs)
+        self.criteria_tabs.setVisible(False)
 
         # Group: Quick Scan Presets (narrow, vertical) with per-preset strategy checkboxes
         self.create_preset_buttons()
@@ -1023,9 +1052,11 @@ class ScanCriteriaWidget(QFrame):
         h.setSpacing(20)
         # Make criteria/presets wider to reduce crowding
         from PyQt6.QtWidgets import QSizePolicy
-        criteria_group.setMaximumWidth(460)
-        presets_group.setMaximumWidth(320)
-        criteria_group.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred))
+        # Allow the criteria area to be wider so content isn't hidden; prefer flexible sizing
+        criteria_group.setMinimumWidth(420)
+        criteria_group.setMaximumWidth(720)
+        presets_group.setMaximumWidth(340)
+        criteria_group.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred))
         presets_group.setSizePolicy(QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred))
         h.addWidget(criteria_group, 0)
         h.addWidget(presets_group, 0)
@@ -1213,6 +1244,11 @@ class ScanCriteriaWidget(QFrame):
         hr.addWidget(preset_label)
         hr.addStretch(1)
         self.run_all_chk = QCheckBox("Run All")
+        # Match width with item checkboxes so header aligns
+        try:
+            self.run_all_chk.setFixedWidth(80)
+        except Exception:
+            pass
         hr.addWidget(self.run_all_chk)
         layout.addWidget(header_row)
 
@@ -1233,12 +1269,15 @@ class ScanCriteriaWidget(QFrame):
             hl.setSpacing(10)
             btn = QPushButton(text)
             btn.clicked.connect(callback)
-            btn.setFixedHeight(28)
-            btn.setMinimumWidth(140)
+            btn.setFixedHeight(30)
+            btn.setMinimumWidth(160)
+            btn.setMaximumWidth(220)
             btn.setStyleSheet("QPushButton { font-size: 11px; padding: 2px 8px; }")
             hl.addWidget(btn, 1)
             # Add a small fixed spacer to visibly separate button and checkbox
             hl.addSpacing(8)
+            # Ensure checkboxes align vertically in a column
+            chk.setFixedWidth(80)
             hl.addWidget(chk, 0, Qt.AlignmentFlag.AlignRight)
             button_layout.addWidget(row)
 
@@ -1290,7 +1329,7 @@ class ScanCriteriaWidget(QFrame):
         form.addRow(self.value_enable)
 
         def wspin(default: int, maxv: int = 10) -> QSpinBox:
-            sb = QSpinBox(); sb.setRange(0, maxv); sb.setValue(default); return sb
+            sb = QSpinBox(); sb.setRange(0, maxv); sb.setValue(default); sb.setFixedWidth(70); return sb
 
         # Define weight spinboxes per rule (defaults from spec)
         self.vw_pe_lt_15 = wspin(4)
@@ -1794,6 +1833,11 @@ class ScannerWidget(QWidget):
         self.ml_run_combo.currentIndexChanged.connect(self.on_ml_run_selected)
         title_layout.addWidget(self.ml_run_combo)
 
+        # Use ML Universe toggle
+        self.use_universe_checkbox = QCheckBox("Use ML Universe")
+        self.use_universe_checkbox.setToolTip("Limit scan to tickers from data/silver/universe.csv produced by the Pipeline")
+        title_layout.addWidget(self.use_universe_checkbox)
+
         # Internal state for ML integration
         self.available_ml_preds = []
         self.selected_ml_pred = None
@@ -1923,6 +1967,12 @@ class ScannerWidget(QWidget):
             criteria = self.criteria_widget.get_criteria()
             if self.use_ml_preds and self.selected_ml_pred:
                 criteria["ml_preds_path"] = self.selected_ml_pred
+            # Include ML universe flag when enabled
+            try:
+                if getattr(self, 'use_universe_checkbox', None) is not None and self.use_universe_checkbox.isChecked():
+                    criteria["use_universe_csv"] = True
+            except Exception:
+                pass
             
             # Update UI
             self.scan_button.setEnabled(False)

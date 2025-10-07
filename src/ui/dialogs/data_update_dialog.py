@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, time as dtime
 from pathlib import Path
+import sys
 import json
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -104,11 +105,55 @@ class DataUpdateDialog(QDialog):
 
 	# --- slots ---
 	def _on_run_now(self):
+		# Try to run the external small-run adapter in a background thread so UI stays responsive.
 		self.progress.setValue(0)
 		self.stop_btn.setEnabled(True)
-		limit = self.limit_spin.value() or None
-		self._service.run_now(batch_limit=limit)
-		self._append_log("Triggered update run…")
+		limit = int(self.limit_spin.value() or 0)
+		# spawn a QThread to run the subprocess
+		from PyQt6.QtCore import QThread, pyqtSignal, QObject
+		import subprocess
+		import shlex
+
+		class SubprocRunner(QObject):
+			finished = pyqtSignal()
+			line = pyqtSignal(str)
+			failed = pyqtSignal(str)
+
+			def __init__(self, cmd):
+				super().__init__()
+				self.cmd = cmd
+
+			def run(self):
+				try:
+					# Start subprocess and stream output
+					proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, text=True)
+					for ln in proc.stdout:
+						self.line.emit(ln.rstrip('\n'))
+					proc.wait()
+					self.finished.emit()
+				except Exception as e:
+					self.failed.emit(str(e))
+
+		# Build command to run the adapter
+		python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
+		adapter = Path(__file__).parent.parent.parent / 'tools' / 'run_stocks_small.py'
+		if adapter.exists():
+			cmd = [python_exec, str(adapter), '--limit', str(limit or 5)]
+			self._append_log(f"Starting adapter: {cmd}")
+			# create thread and runner
+			runner = SubprocRunner(cmd)
+			thread = QThread(self)
+			runner.moveToThread(thread)
+			thread.started.connect(runner.run)
+			runner.line.connect(self._append_log)
+			runner.failed.connect(lambda msg: self._append_log(f"Adapter error: {msg}"))
+			runner.finished.connect(lambda: (self._append_log("Adapter finished."), thread.quit()))
+			thread.start()
+		else:
+			# fallback to built-in service run_now
+			self._append_log("Adapter not found; falling back to DataUpdateService.run_now")
+			self._service.run_now(batch_limit=limit or None)
+			self._append_log("Triggered update run…")
 
 	def _on_stop(self):
 		self._service.stop()

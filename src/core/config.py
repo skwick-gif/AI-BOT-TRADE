@@ -26,7 +26,7 @@ def load_configuration():
         
         # IBKR Configuration
         'IBKR_HOST': os.environ.get('IBKR_HOST', '127.0.0.1'),
-        'IBKR_PORT': int(os.environ.get('IBKR_PORT', '7497')),
+        'IBKR_PORT': int(os.environ.get('IBKR_PORT', '4001')),  # IB Gateway default
         'IBKR_CLIENT_ID': int(os.environ.get('IBKR_CLIENT_ID', '99')),
         
         # Application Settings

@@ -1,22 +1,59 @@
-streamlit
-pandas
+# AI Trading Bot - Unified Requirements
+# Core PyQt6 dependencies
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.3
+
+# Trading and financial data
+ib_insync==0.9.86
+yfinance==0.2.28
+pandas>=2.2.2
+numpy>=1.26.4
+fredapi==0.5.0
 pandas-ta
-scikit-learn
 pyarrow
-ib_insync
-python-dotenv
-requests
-openai
-yfinance
-plotly
-pytrends
-vectorbt
-fredapi
-praw
-nest-asyncio
-numpy
-matplotlib
-aiohttp
-lightgbm
+
+# Machine learning
+scikit-learn==1.5.1
+xgboost==2.1.1
+lightgbm==4.5.0
 catboost
 pytorch-tabnet
+joblib
+
+# Data processing and analysis
+openpyxl==3.1.5
+xlsxwriter==3.2.0
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+vaderSentiment==3.3.2
+textblob==0.18.0.post0
+vectorbt
+pytrends
+
+# AI/LLM integration
+openai==1.40.6
+praw
+nest-asyncio
+
+# Configuration and environment
+python-dotenv==1.0.1
+pydantic==2.8.2
+
+# Logging and monitoring
+rich==13.7.1
+
+# Data visualization
+matplotlib==3.9.2
+plotly==5.23.0
+pyqtgraph==0.13.7
+
+# Streamlit (for dashboards)
+streamlit
+
+# Additional utilities
+aiohttp
+
+# Development and testing
+pytest==8.3.2
+pytest-qt==4.4.0

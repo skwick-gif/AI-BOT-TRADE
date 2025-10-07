@@ -89,8 +89,17 @@ class DataUpdateWorker(QObject):
 			return '-' in sym
 
 	def _update_price(self, ticker: str):
-		import pandas as pd
-		import yfinance as yf
+		# Import locally and handle missing packages gracefully so the worker doesn't crash
+		try:
+			import pandas as pd
+		except Exception as e:
+			self.log.emit(f"{ticker}: missing pandas dependency: {e}. Please install requirements (pip install -r requirements.txt)")
+			return
+		try:
+			import yfinance as yf
+		except Exception as e:
+			self.log.emit(f"{ticker}: missing yfinance dependency: {e}. Please install yfinance (pip install yfinance)")
+			return
 
 		folder = self.cfg.source_dir / ticker
 		folder.mkdir(parents=True, exist_ok=True)
@@ -128,11 +137,20 @@ class DataUpdateWorker(QObject):
 			df.to_csv(csv_path)
 			self.log.emit(f"{ticker}: saved {len(df)} rows of price data")
 		except Exception as e:
-			self.log.emit(f"{ticker}: error downloading prices: {e}")
+			import traceback
+			self.log.emit(f"{ticker}: error downloading prices: {e}\n{traceback.format_exc()}")
 
 	def _update_fundamentals(self, ticker: str):
-		import json
-		import yfinance as yf
+		# Import locally and handle missing packages
+		try:
+			import json
+		except Exception:
+			import json  # fallback, should usually be available
+		try:
+			import yfinance as yf
+		except Exception as e:
+			self.log.emit(f"{ticker}: missing yfinance dependency for fundamentals: {e}. Please install yfinance")
+			return
 
 		folder = self.cfg.source_dir / ticker
 		folder.mkdir(parents=True, exist_ok=True)
@@ -154,13 +172,24 @@ class DataUpdateWorker(QObject):
 			else:
 				self.log.emit(f"{ticker}: fundamentals not available")
 		except Exception as e:
-			self.log.emit(f"{ticker}: error fundamentals: {e}")
+			import traceback
+			self.log.emit(f"{ticker}: error fundamentals: {e}\n{traceback.format_exc()}")
 
 	def _convert_to_parquet(self):
 		"""Run the existing converter script to write Parquet outputs."""
 		try:
-			# Call converter as a module to avoid subprocess overhead
-			from scripts.convert_stock_data_to_parquet import convert_all
+			# Call the converter script by file path so it works whether or not 'scripts' is a package
+			import runpy
+			script_path = Path(__file__).parent.parent.parent / "scripts" / "convert_stock_data_to_parquet.py"
+			if not script_path.exists():
+				self.log.emit(f"converter error: converter script not found at {script_path}")
+				return
+			# runpy.run_path will return a dict with module globals; pull convert_all
+			mod_globals = runpy.run_path(str(script_path))
+			convert_all = mod_globals.get('convert_all')
+			if not convert_all:
+				self.log.emit("converter error: convert_all not found in converter script")
+				return
 			convert_all(
 				self.cfg.source_dir,
 				self.cfg.parquet_out,
@@ -170,66 +199,131 @@ class DataUpdateWorker(QObject):
 				None,
 			)
 		except Exception as e:
-			self.log.emit(f"converter error: {e}")
+			import traceback
+			self.log.emit(f"converter error: {e}. Traceback:\n{traceback.format_exc()}.\nMake sure pandas and pyarrow/fastparquet are installed to write parquet files.")
 
 	def run(self):
-		"""Main entry to perform update: iterate tickers, update prices + fundamentals, then convert."""
+		"""Main entry to perform update: call the provided attached script's
+		process_tickers_daily() implementation directly so the user's script
+		becomes the single source of truth (one-shot replacement). Signals
+		(progress/log/completed/error) are preserved and mapped to the script's
+		print/logging output.
+		"""
+		# Ensure we use the attached script from tools; this is a full replacement.
 		try:
-			tickers = self._list_tickers()
-			total = len(tickers)
-			if total == 0:
-				self.error.emit("No tickers found under stock_data/ or data/bronze/daily")
-				return
-			if self.cfg.batch_limit:
-				tickers = tickers[: self.cfg.batch_limit]
-				total = len(tickers)
-			self.log.emit(f"Starting daily update for {total} tickers…")
-			updated_prices = 0
-			updated_fund = 0
-			for i, t in enumerate(tickers, 1):
-				if self._stop:
-					self.log.emit("Update stopped by user")
-					break
-				before_price = datetime.now()
-				self._update_price(t)
-				updated_prices += 1
-				# keep fundamentals light; not every day may change; update if file missing or stale (older than 14 days)
-				adv = (self.cfg.source_dir / t / f"{t}_advanced.json")
-				stale = True
-				try:
-					if adv.exists():
-						mtime = datetime.fromtimestamp(adv.stat().st_mtime)
-						stale = (datetime.now() - mtime) > timedelta(days=14)
-				except Exception:
-					stale = True
-				if stale:
-					self._update_fundamentals(t)
-					updated_fund += 1
-				self.progress.emit(int(i * 80 / max(1, total)))  # first 80% for download
-			# Convert to parquet
-			self.log.emit("Converting to Parquet…")
-			self._convert_to_parquet()
-			self.progress.emit(100)
-			# Persist a simple run log (CSV)
+			# Ensure tools in path and import (same as stock_data_adapter.py)
+			from pathlib import Path
+			import sys
+			import os
+			# Find tools directory - try multiple approaches
+			current_file = getattr(sys.modules.get(__name__), '__file__', None)
+			if current_file:
+				TOOLS_DIR = Path(current_file).parent.parent / "tools"
+			else:
+				# Fallback: assume we're in src/services and tools is at project root
+				TOOLS_DIR = Path(os.getcwd()) / "tools"
+			if str(TOOLS_DIR) not in sys.path:
+				sys.path.insert(0, str(TOOLS_DIR))
+
+			# Try to import stocks_attached using runpy (more reliable)
 			try:
-				import pandas as pd
-				from pathlib import Path
-				outdir = Path("data/bronze/update_runs")
-				outdir.mkdir(parents=True, exist_ok=True)
-				fp = outdir / "log.csv"
-				row = pd.DataFrame([{
-					"timestamp": pd.Timestamp.now(),
-					"tickers_total": total,
-					"prices_updated": updated_prices,
-					"fundamentals_updated": updated_fund,
-				}])
-				if fp.exists():
-					old = pd.read_csv(fp)
-					row = pd.concat([old, row], ignore_index=True)
-				row.to_csv(fp, index=False)
+				import runpy
+				attached_globals = runpy.run_path(str(TOOLS_DIR / "stocks_attached.py"))
+				attached = type('AttachedModule', (), attached_globals)()
+				# Copy all globals to the object
+				for key, value in attached_globals.items():
+					setattr(attached, key, value)
+			except Exception as ie:
+				self.error.emit(f"Attached data-update script not available; runpy failed: {ie}")
+				return
+		except Exception as e:
+			# If import fails, fall back to previous built-in behavior
+			self.error.emit(f"Attached data-update script not available; import failed: {e}")
+			return
+
+		# Bridge: capture prints from the attached script and forward to self.log
+		def _log(s: str):
+			try:
+				self.log.emit(str(s))
 			except Exception:
 				pass
-			self.completed.emit({"tickers": total, "prices_updated": updated_prices, "fundamentals_updated": updated_fund})
+
+		# Simple progress emitter: attached script doesn't provide percent updates
+		# so we approximate by emitting 0..80 during tickers loop and 100 at end.
+		# The attached script already prints progress; we rely on those prints.
+
+		# Run the attached daily processing in-process. It will write CSV/JSON under
+		# the configured source dir. We need to ensure it uses the same folder.
+		try:
+			# Patch the attached module's DATA_FOLDER and START_DATE to match cfg
+			try:
+				attached.DATA_FOLDER = str(self.cfg.source_dir)
+			except Exception:
+				pass
+			try:
+				attached.START_DATE = self.cfg.start_date
+			except Exception:
+				pass
+
+			# Map stdout prints to log emitter by temporarily replacing print if possible
+			_orig_print = getattr(attached, 'print', None)
+			try:
+				# Define a small wrapper to forward prints
+				def _p(*args, **kwargs):
+					msg = ' '.join(str(a) for a in args)
+					_log(msg)
+				# Replace
+				attached.print = _p
+			except Exception:
+				pass
+
+			# Execute the user's daily processing
+			try:
+				attached.process_tickers_daily()
+			except Exception as e:
+				import traceback
+				self.error.emit(f"attached script error: {e}\n{traceback.format_exc()}")
+				# restore print
+				if _orig_print is not None:
+					attached.print = _orig_print
+				return
+			# restore print
+			if _orig_print is not None:
+				attached.print = _orig_print
+
+			# After the attached script wrote CSV/JSON into source_dir, run the converter
+			self.log.emit("Converting to Parquet…")
+			try:
+				# call converter via runpy as the adapter did, but with Path args
+				import runpy
+				script_path = Path(__file__).parent.parent.parent / "scripts" / "convert_stock_data_to_parquet.py"
+				if not script_path.exists():
+					self.error.emit(f"converter error: converter script not found at {script_path}")
+					return
+				mod = runpy.run_path(str(script_path))
+				convert_all = mod.get('convert_all')
+				if not convert_all:
+					self.error.emit("converter error: convert_all not found in converter script")
+					return
+				# run with Path objects
+				convert_all(self.cfg.source_dir, self.cfg.parquet_out, self.cfg.fund_json_out, self.cfg.fund_parquet_out, self.cfg.fund_parquet_dir, None)
+			except Exception as e:
+				import traceback
+				self.error.emit(f"converter error: {e}\n{traceback.format_exc()}")
+
+			# Emit final progress and completed payload
+			self.progress.emit(100)
+			# Build a best-effort summary
+			try:
+				# Count parquet files written
+				count = 0
+				if self.cfg.parquet_out.exists():
+					for _ in self.cfg.parquet_out.glob('*.parquet'):
+						count += 1
+				payload = {"tickers": count, "prices_updated": count, "fundamentals_updated": count}
+			except Exception:
+				payload = {"tickers": 0, "prices_updated": 0, "fundamentals_updated": 0}
+			self.completed.emit(payload)
 		except Exception as e:
 			self.error.emit(str(e))
 

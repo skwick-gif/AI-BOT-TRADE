@@ -72,7 +72,7 @@ class IBKRService:
             # Build list of ports to try in priority order:
             # 1) Configured port (self.config.port)
             # 2) Environment override IBKR_PORT
-            # 3) Fallbacks 7496, 7497
+            # 3) Fallbacks 4001 (IB Gateway), 7496, 7497
             env_port = None
             try:
                 env_port = int(os.getenv("IBKR_PORT", "")) if os.getenv("IBKR_PORT") else None
@@ -86,7 +86,7 @@ class IBKRService:
             if env_port is not None:
                 ports_to_try.append(env_port)
             # Fallbacks
-            ports_to_try.extend([7496, 7497])
+            ports_to_try.extend([4001, 7496, 7497])  # IB Gateway first, then TWS ports
             # Deduplicate while preserving order
             seen = set()
             ports_to_try = [p for p in ports_to_try if not (p in seen or seen.add(p))]

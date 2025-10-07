@@ -68,6 +68,76 @@ class _CalendarFetchThread(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+"""
+Calendar Widget
+Simple calendar display with a placeholder for upcoming events.
+"""
+
+import os
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QCalendarWidget, QPushButton,
+    QListWidget, QListWidgetItem, QDialog, QTextEdit, QMessageBox, QCheckBox, QSpinBox, QDoubleSpinBox
+)
+from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
+
+from utils.logger import get_logger
+from services.finnhub_client import (
+    fetch_earnings_calendar,
+    fetch_dividends,
+    fetch_economic_calendar,
+    fetch_ipo_calendar,
+)
+from utils.trading_helpers import get_portfolio_positions
+from services.sentiment_service import aggregate_symbol_sentiment
+from services.earnings_ml import predict_half_day_direction, train_symbol_model, load_saved_model
+
+
+class _CalendarFetchThread(QThread):
+    """Worker thread to fetch events from Finnhub to keep UI responsive."""
+    data_ready = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        api_key: str,
+        start_date: str,
+        end_date: str,
+        symbols: list[str],
+        include_earnings: bool = True,
+        include_dividends: bool = True,
+        include_economic: bool = True,
+        include_ipo: bool = True,
+    ):
+        super().__init__()
+        self.api_key = api_key
+        self.start_date = start_date
+        self.end_date = end_date
+        self.symbols = symbols
+        self.include_earnings = include_earnings
+        self.include_dividends = include_dividends
+        self.include_economic = include_economic
+        self.include_ipo = include_ipo
+
+    def run(self):
+        try:
+            events = []
+            # Earnings
+            if self.include_earnings:
+                events.extend(fetch_earnings_calendar(self.api_key, self.start_date, self.end_date, self.symbols))
+            # Dividends
+            if self.include_dividends:
+                events.extend(fetch_dividends(self.api_key, self.start_date, self.end_date, self.symbols))
+            # Economic (may be empty if not in plan)
+            if self.include_economic:
+                events.extend(fetch_economic_calendar(self.api_key, self.start_date, self.end_date))
+            # IPOs (US only)
+            if self.include_ipo:
+                events.extend(fetch_ipo_calendar(self.api_key, self.start_date, self.end_date, us_only=True))
+            self.data_ready.emit(events)
+        except Exception as e:
+            self.error.emit(str(e))
+
 
 class CalendarWidget(QFrame):
     """Calendar section for the dashboard"""
@@ -133,6 +203,9 @@ class CalendarWidget(QFrame):
         self.sentiment_days_spin = QSpinBox()
         self.sentiment_days_spin.setRange(1, 14)
         self.sentiment_days_spin.setValue(3)
+        # Make the sentiment control slightly larger for readability
+        self.sentiment_days_spin.setFixedWidth(90)
+        self.sentiment_days_spin.setToolTip("Number of days to aggregate news sentiment")
         controls.addWidget(self.sentiment_days_spin)
 
         controls.addWidget(QLabel("Blend:"))
@@ -141,6 +214,9 @@ class CalendarWidget(QFrame):
         self.blend_spin.setSingleStep(0.05)
         self.blend_spin.setDecimals(2)
         self.blend_spin.setValue(0.20)
+        # Slightly wider so the label and numeric value don't get clipped
+        self.blend_spin.setFixedWidth(90)
+        self.blend_spin.setToolTip("Blend weight used when combining sentiment with features")
         controls.addWidget(self.blend_spin)
 
         layout.addLayout(controls)
@@ -248,6 +324,24 @@ class CalendarWidget(QFrame):
                 date = ev.get("date") or ev.get("ipoDate") or ev.get("time") or ""
                 exchange = ev.get("exchange") or ev.get("market") or ""
                 price = ev.get("price") or ev.get("priceLow") or ev.get("minPrice") or ""
+                # Skip IPOs that already occurred before today to avoid clutter
+                try:
+                    from datetime import datetime as _dt
+                    parsed = None
+                    if date:
+                        try:
+                            parsed = _dt.fromisoformat(str(date))
+                        except Exception:
+                            try:
+                                parsed = _dt.strptime(str(date), "%Y-%m-%d")
+                            except Exception:
+                                parsed = None
+                    if parsed is not None:
+                        today = _dt.utcnow()
+                        if parsed.date() < today.date():
+                            continue
+                except Exception:
+                    pass
                 item = QListWidgetItem(f"🚀 IPO • {symbol} • {date} • {exchange} • {price}")
                 item.setData(Qt.ItemDataRole.UserRole, ev)
                 self.events_list.addItem(item)

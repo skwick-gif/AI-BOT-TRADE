@@ -58,8 +58,8 @@ python main.py
 
 ### 2. Configure IBKR Connection
 1. Start TWS or IB Gateway
-2. Enable API connections in TWS settings
-3. Use port 7497 for paper trading
+2. Enable API connections in TWS/Gateway settings
+3. Use port 4001 for IB Gateway, 7497 for TWS paper trading
 4. Click "Connect IBKR" in the application
 
 ### 3. Basic Workflow
@@ -101,7 +101,7 @@ python main.py
 ### IBKR Connection Issues
 - Ensure TWS/Gateway is running
 - Check API settings are enabled
-- Verify correct port (7497 for paper)
+- Verify correct port (4001 for IB Gateway, 7497 for TWS paper)
 - Try different client ID if conflicts occur
 
 ### Performance Optimization

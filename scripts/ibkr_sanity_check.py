@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Quick sanity check for IBKR connectivity using ib_insync (standalone, no Qt).
-- Connects to TWS/Gateway using IBKR_HOST/IBKR_PORT/IBKR_CLIENT_ID (defaults 127.0.0.1/7497/1)
+- Connects to TWS/Gateway using IBKR_HOST/IBKR_PORT/IBKR_CLIENT_ID (defaults 127.0.0.1/4001/1)
 - Prints managed accounts and auto-selects a valid account code
 - Subscribes to account updates for that account
 - Prints count of account summary fields and positions
@@ -19,7 +19,7 @@ except Exception as e:
     sys.exit(1)
 
 HOST = os.environ.get("IBKR_HOST", "127.0.0.1")
-PORT = int(os.environ.get("IBKR_PORT", "7497"))
+PORT = int(os.environ.get("IBKR_PORT", "4001"))  # IB Gateway default
 CLIENT_ID = int(os.environ.get("IBKR_CLIENT_ID", "1"))
 
 print(f"[SANITY] Connecting to IBKR at {HOST}:{PORT} (clientId={CLIENT_ID})")
