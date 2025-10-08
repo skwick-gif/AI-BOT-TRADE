@@ -105,19 +105,17 @@ class WatchlistTable(QTableWidget):
     def setup_ui(self):
         """Setup watchlist table"""
         # Set columns
-        self.setColumnCount(12)
+        self.setColumnCount(16)
         headers = [
             "Symbol", "Added At", "Price", "Volume",
-            "Day 1", "Change 1", "Day 2", "Change 2", "AI Rating", "Price Target", "Stop Loss", "Signal", "Sharpe Ratio"
+            "Day 1", "Day 2", "Day 3", "Day 4", "Day 5", "Day 6", "Day 7",
+            "AI Rating", "Price Target", "Stop Loss", "Signal", "Sharpe Ratio"
         ]
         self.setHorizontalHeaderLabels(headers)
-        # התאמת רוחב עמודות למסך קטן
+        # התאמת רוחב עמודות אוטומטית לפי תוכן
         header = self.horizontalHeader()
-        col_widths = [70, 90, 70, 70, 70, 60, 70, 70, 70, 70, 70, 70]
-        for i, w in enumerate(col_widths):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
-            self.setColumnWidth(i, w)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Symbol
+        for i in range(len(headers)):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         
         # Enable sorting
         self.setSortingEnabled(True)
