@@ -3217,44 +3217,6 @@ class ScanSettingsDialog(QDialog):
         scroll_area.setWidget(self.criteria_widget)
         scroll_area.setMaximumHeight(350)  # Limit height to prevent overlap
         layout.addWidget(scroll_area, 1)  # Give it stretch
-        presets_frame = QFrame()
-        presets_frame.setFrameStyle(QFrame.Shape.Box)
-        presets_frame.setStyleSheet("QFrame { background-color: #F8F9FA; border: 1px solid #DEE2E6; border-radius: 4px; }")
-        presets_layout = QVBoxLayout(presets_frame)
-        
-        presets_title = QLabel("🚀 Quick Presets")
-        presets_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        presets_title.setStyleSheet("color: #495057; margin: 5px;")
-        presets_layout.addWidget(presets_title)
-        
-        presets_buttons_layout = QHBoxLayout()
-        
-        # Conservative preset
-        conservative_btn = QPushButton("🛡️ Conservative")
-        conservative_btn.clicked.connect(self.apply_conservative_preset)
-        conservative_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
-        presets_buttons_layout.addWidget(conservative_btn)
-        
-        # Aggressive preset  
-        aggressive_btn = QPushButton("🔥 Aggressive")
-        aggressive_btn.clicked.connect(self.apply_aggressive_preset)
-        aggressive_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
-        presets_buttons_layout.addWidget(aggressive_btn)
-        
-        # Penny stocks preset
-        penny_btn = QPushButton("💰 Penny Stocks")
-        penny_btn.clicked.connect(self.apply_penny_preset)
-        penny_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
-        presets_buttons_layout.addWidget(penny_btn)
-        
-        # Blue chip preset
-        bluechip_btn = QPushButton("🏛️ Blue Chip")
-        bluechip_btn.clicked.connect(self.apply_bluechip_preset)
-        bluechip_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
-        presets_buttons_layout.addWidget(bluechip_btn)
-        
-        presets_layout.addLayout(presets_buttons_layout)
-        layout.addWidget(presets_frame)
         
         # Buttons
         button_layout = QHBoxLayout()
