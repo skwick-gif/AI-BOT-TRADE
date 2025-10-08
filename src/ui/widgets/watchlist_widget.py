@@ -19,6 +19,8 @@ except ImportError:
     get_logger = None
     AIService = None
 
+# ChartDialog will be imported dynamically when needed
+
 class WatchlistTable(QTableWidget):
     symbol_selected = pyqtSignal(str)
     trade_requested = pyqtSignal(str)
@@ -79,15 +81,37 @@ class WatchlistTable(QTableWidget):
             btn.setToolTip(tip)
             btn.setText(icon_text)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setAutoRaise(True)
-            btn.setStyleSheet("font-size: 18px; padding: 0 4px;")
+            btn.setAutoRaise(False)  # Make button more visible
+            btn.setStyleSheet("""
+                QToolButton {
+                    font-size: 10px; 
+                    font-weight: bold;
+                    padding: 4px 6px;
+                    border: 1px solid #ccc;
+                    background-color: #f8f9fa;
+                    border-radius: 4px;
+                    color: #333;
+                    min-width: 20px;
+                    min-height: 20px;
+                }
+                QToolButton:hover {
+                    background-color: #e9ecef;
+                    border-color: #007bff;
+                    color: #007bff;
+                }
+                QToolButton:pressed {
+                    background-color: #d4edda;
+                    border-color: #28a745;
+                    color: #155724;
+                }
+            """)
             return btn
         
-        ai_btn = mk_btn("Ask AI", "🤖")
+        ai_btn = mk_btn("Ask AI", "AI")
         ai_btn.clicked.connect(lambda: self.tools_action.emit('ai', symbol))
         hl.addWidget(ai_btn)
         
-        chart_btn = mk_btn("Open Chart", "📈")
+        chart_btn = mk_btn("Open Chart", "�")
         chart_btn.clicked.connect(lambda: self.tools_action.emit('chart', symbol))
         hl.addWidget(chart_btn)
         
@@ -513,10 +537,13 @@ class WatchlistWidget(QWidget):
 
     def _handle_tools_action(self, action: str, symbol: str):
         """Handle per-row tools icon actions: AI and Chart"""
+        self.logger.info(f"Tools action requested: {action} for {symbol}")
         if action == 'ai':
             self._handle_ask_ai(symbol)
         elif action == 'chart':
             self._handle_open_chart(symbol)
+        else:
+            self.logger.warning(f"Unknown tools action: {action}")
 
     def _handle_ask_ai(self, symbol: str):
         """Handle AI request for symbol"""
@@ -536,7 +563,22 @@ class WatchlistWidget(QWidget):
     def _handle_open_chart(self, symbol: str):
         """Handle chart opening for symbol"""
         self.logger.info(f"Chart requested for {symbol}")
-        # TODO: Implement chart opening logic
+        
+        try:
+            # Import ChartDialog dynamically to avoid circular imports
+            from ui.widgets.scanner_widget import ChartDialog as CD
+            self.logger.info(f"Creating ChartDialog for {symbol}")
+            # Open chart dialog with timeframe selector (same as scanner)
+            dlg = CD(symbol, self)
+            dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+            dlg.show()
+            self.logger.info(f"Chart dialog opened successfully for {symbol}")
+        except ImportError as e:
+            self.logger.error(f"Could not import ChartDialog: {e}")
+            QMessageBox.warning(self, "Chart", "Chart functionality is not available.\nScanner module may not be loaded.")
+        except Exception as e:
+            self.logger.error(f"Error opening chart for {symbol}: {e}")
+            QMessageBox.warning(self, "Chart", f"Failed to open chart for {symbol}:\n{e}")
 
     def add_symbol(self):
         """Add symbol from input field"""

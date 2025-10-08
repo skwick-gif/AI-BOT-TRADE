@@ -32,8 +32,9 @@ class ChartDialog(QDialog):
     def __init__(self, symbol: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Chart - {symbol}")
-        # Open larger by default for readability
-        self.setMinimumSize(1440, 840)
+        # Set reasonable size for chart dialog
+        self.setMinimumSize(900, 600)
+        self.resize(1000, 650)
         self.symbol = symbol
         v = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -131,15 +132,19 @@ class ChartDialog(QDialog):
                     x = mdates.date2num(pd.to_datetime(dates))
                     # Slightly larger candles for clarity
                     width = (x[1] - x[0]) * 0.8 if len(x) > 1 else 0.8
-                    up_color = '#2ECC71'
-                    down_color = '#E74C3C'
+                    up_color = '#00C851'    # Brighter green for up moves
+                    down_color = '#FF4444'  # Brighter red for down moves
                     for xi, o, h, l, c in zip(x, plot['open'], plot['high'], plot['low'], plot['close']):
                         color = up_color if c >= o else down_color
-                        ax.vlines(xi, l, h, color=color, linewidth=1.2)
+                        # Thicker wicks for better visibility
+                        ax.vlines(xi, l, h, color=color, linewidth=1.5, alpha=0.8)
                         y = min(o, c)
                         height = abs(c - o) if abs(c - o) > 1e-9 else 1e-9
+                        # More opaque candle bodies
                         ax.add_patch(
-                            __import__('matplotlib').patches.Rectangle((xi - width/2, y), width, height, color=color, alpha=0.9)
+                            __import__('matplotlib').patches.Rectangle((xi - width/2, y), width, height, 
+                                                                     color=color, alpha=0.95, 
+                                                                     edgecolor=color, linewidth=0.5)
                         )
                 except Exception:
                     ax.plot(dates, closes, color='steelblue', label='Close')

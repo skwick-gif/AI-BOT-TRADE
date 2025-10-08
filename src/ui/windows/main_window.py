@@ -187,6 +187,16 @@ class MainWindow(QMainWindow):
         ai_trading_action.triggered.connect(self.show_ai_trading_guide)
         help_menu.addAction(ai_trading_action)
 
+        # Watchlist Guide
+        watchlist_guide_action = QAction("Watchlist Guide", self)
+        watchlist_guide_action.triggered.connect(self.show_watchlist_guide)
+        help_menu.addAction(watchlist_guide_action)
+
+        # ML Training & Scanner Guide
+        ml_scanner_guide_action = QAction("ML Training & Scanner Guide", self)
+        ml_scanner_guide_action.triggered.connect(self.show_ml_scanner_guide)
+        help_menu.addAction(ml_scanner_guide_action)
+
         # Data menu for Daily Update dialog
         data_menu = menubar.addMenu("Data")
         daily_update_action = QAction("Daily Update…", self)
@@ -669,6 +679,122 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error opening AI Trading guide: {e}")
             QMessageBox.critical(self, "Guide Error", f"Failed to open AI Trading guide:\n{e}")
+
+    def show_watchlist_guide(self):
+        """Open the Watchlist guide (Markdown) in a right-to-left styled dialog"""
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            guide_path = project_root / "docs" / "WATCHLIST_GUIDE.md"
+            if not guide_path.exists():
+                QMessageBox.warning(self, "Guide Not Found", f"Could not find guide at:\n{guide_path}")
+                return
+            text = guide_path.read_text(encoding="utf-8")
+            dlg = QDialog(self)
+            dlg.setWindowTitle("מדריך רשימת מעקב - Watchlist Guide")
+            dlg.resize(1000, 700)  # Larger for Hebrew content
+            browser = QTextBrowser(dlg)
+            browser.setReadOnly(True)
+            browser.setOpenExternalLinks(True)
+            
+            # Set RTL styling for Hebrew content
+            browser.setStyleSheet("""
+                QTextBrowser {
+                    direction: rtl;
+                    text-align: right;
+                    font-family: 'Arial', 'Segoe UI', sans-serif;
+                    font-size: 11pt;
+                    line-height: 1.4;
+                }
+            """)
+            
+            try:
+                import markdown  # type: ignore
+                html_body = markdown.markdown(text, extensions=["extra", "sane_lists", "tables", "fenced_code"])
+                # Add RTL styling to HTML
+                styled_html = f"""
+                <html dir="rtl">
+                <head>
+                    <meta charset="utf-8">
+                    <style>
+                        body {{ 
+                            direction: rtl; 
+                            text-align: right; 
+                            font-family: 'Arial', 'Segoe UI', sans-serif;
+                            line-height: 1.6;
+                            margin: 20px;
+                        }}
+                        h1, h2, h3, h4, h5, h6 {{ 
+                            text-align: right; 
+                            color: #2c3e50; 
+                        }}
+                        code {{ 
+                            background-color: #f8f9fa; 
+                            padding: 2px 4px; 
+                            border-radius: 3px; 
+                        }}
+                        pre {{ 
+                            background-color: #f8f9fa; 
+                            padding: 10px; 
+                            border-radius: 5px; 
+                            overflow-x: auto; 
+                        }}
+                        table {{ 
+                            border-collapse: collapse; 
+                            width: 100%; 
+                        }}
+                        th, td {{ 
+                            border: 1px solid #ddd; 
+                            padding: 8px; 
+                            text-align: right; 
+                        }}
+                        th {{ 
+                            background-color: #f2f2f2; 
+                        }}
+                    </style>
+                </head>
+                <body>{html_body}</body>
+                </html>
+                """
+                browser.setHtml(styled_html)
+            except Exception:
+                browser.setMarkdown(text)
+            
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(browser)
+            dlg.setLayout(layout)
+            dlg.exec()
+        except Exception as e:
+            self.logger.error(f"Error opening Watchlist guide: {e}")
+            QMessageBox.critical(self, "Guide Error", f"Failed to open Watchlist guide:\n{e}")
+
+    def show_ml_scanner_guide(self):
+        """Open the ML Training & Scanner guide (Markdown) in a dialog"""
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            guide_path = project_root / "docs" / "help" / "ml_training_and_scan.md"
+            if not guide_path.exists():
+                QMessageBox.warning(self, "Guide Not Found", f"Could not find guide at:\n{guide_path}")
+                return
+            text = guide_path.read_text(encoding="utf-8")
+            dlg = QDialog(self)
+            dlg.setWindowTitle("ML Training & Scanner Guide")
+            dlg.resize(840, 600)
+            browser = QTextBrowser(dlg)
+            browser.setReadOnly(True)
+            browser.setOpenExternalLinks(True)
+            try:
+                import markdown  # type: ignore
+                html_body = markdown.markdown(text, extensions=["extra", "sane_lists", "tables", "fenced_code"])
+                browser.setHtml(html_body)
+            except Exception:
+                browser.setMarkdown(text)
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(browser)
+            dlg.setLayout(layout)
+            dlg.exec()
+        except Exception as e:
+            self.logger.error(f"Error opening ML Scanner guide: {e}")
+            QMessageBox.critical(self, "Guide Error", f"Failed to open ML Scanner guide:\n{e}")
     
     def show_api_keys_dialog(self):
         """Show API keys configuration dialog"""

@@ -4,6 +4,7 @@ AI Service for trading assistant integration
 
 import asyncio
 import json
+import time
 from typing import Optional, Dict, Any, List
 import aiohttp
 from datetime import datetime
@@ -149,6 +150,9 @@ Always remind users about risk management and due diligence."""
         if not self.config.perplexity.api_key:
             return "Perplexity API key not configured. Please add your API key to the .env file."
         
+        # Record API call start time
+        api_start_time = time.time()
+        
         url = "https://api.perplexity.ai/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.config.perplexity.api_key}",
@@ -169,23 +173,30 @@ Always remind users about risk management and due diligence."""
             "stream": False
         }
         
+        self.logger.debug(f"Calling Perplexity API with model: {self.config.perplexity.model}")
+        
         # Create a transient session if none is available, and close it after use.
         # This prevents retaining a ClientSession that is bound to an event loop
         # that may be closed by the caller between invocations.
         created_here = False
         if not self.session or getattr(self.session, "closed", False):
-            self.session = aiohttp.ClientSession()
+            # Set timeout for API calls (30 seconds)
+            timeout = aiohttp.ClientTimeout(total=30)
+            self.session = aiohttp.ClientSession(timeout=timeout)
             created_here = True
 
         try:
             async with self.session.post(url, headers=headers, json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
+                    api_response_time = time.time() - api_start_time
+                    self.logger.info(f"Perplexity API call successful in {api_response_time:.2f}s")
                     return data['choices'][0]['message']['content']
                 else:
                     error_text = await response.text()
                     # Handle invalid model error by attempting a fallback
                     if response.status == 400 and 'invalid_model' in error_text.lower():
+                        self.logger.warning(f"Invalid model {self.config.perplexity.model}, trying fallback...")
                         # Try a fallback model name
                         fallback = 'sonar'
                         if self.config.perplexity.model != fallback:
@@ -194,10 +205,16 @@ Always remind users about risk management and due diligence."""
                             async with self.session.post(url, headers=headers, json=payload_fallback) as resp2:
                                 if resp2.status == 200:
                                     data2 = await resp2.json()
+                                    api_response_time = time.time() - api_start_time
+                                    self.logger.info(f"Perplexity API fallback call successful in {api_response_time:.2f}s")
                                     return data2['choices'][0]['message']['content']
                                 else:
                                     error_text2 = await resp2.text()
+                                    api_response_time = time.time() - api_start_time
+                                    self.logger.error(f"API fallback call failed after {api_response_time:.2f}s")
                                     raise Exception(f"API call failed (fallback) with status {resp2.status}: {error_text2}")
+                    api_response_time = time.time() - api_start_time
+                    self.logger.error(f"API call failed after {api_response_time:.2f}s with status {response.status}")
                     raise Exception(f"API call failed with status {response.status}: {error_text}")
         finally:
             if created_here and self.session:

@@ -172,6 +172,9 @@ class AIWorker(QObject):
     def process_message(self, message: str):
         """Process user message and generate AI response"""
         try:
+            # Record start time for performance tracking
+            start_time = time.time()
+            
             # Ensure a persistent event loop bound to this worker thread
             if not self.loop:
                 self.loop = asyncio.new_event_loop()
@@ -180,6 +183,9 @@ class AIWorker(QObject):
             response = self.handle_special_commands(message)
             
             if response:
+                # Calculate response time for special commands
+                response_time = time.time() - start_time
+                self.logger.info(f"Special command processed in {response_time:.2f}s")
                 self.response_ready.emit(response)
             else:
                 # Use AI service for general queries
@@ -192,10 +198,24 @@ class AIWorker(QObject):
                     # Get portfolio context
                     context = self.get_trading_context()
                     
+                    # Record API call start time
+                    api_start_time = time.time()
+                    
                     # Get AI response
                     response = self.loop.run_until_complete(
                         self.ai_service.get_ai_response(message, context)
                     )
+                    
+                    # Calculate and log API response time
+                    api_response_time = time.time() - api_start_time
+                    total_response_time = time.time() - start_time
+                    
+                    self.logger.info(f"Perplexity API response time: {api_response_time:.2f}s")
+                    self.logger.info(f"Total processing time: {total_response_time:.2f}s")
+                    
+                    # Add timing info to response if it took longer than expected
+                    if api_response_time > 3.0:
+                        response += f"\n\n⏱️ *Response time: {api_response_time:.1f}s*"
                     
                     self.response_ready.emit(response)
                     
@@ -209,6 +229,7 @@ class AIWorker(QObject):
     def test_api(self):
         """Perform a lightweight Perplexity API connectivity test"""
         try:
+            start_time = time.time()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -216,22 +237,25 @@ class AIWorker(QObject):
                     self.ai_service = AIService(self.config)
                 # Simple prompt to validate response
                 result = loop.run_until_complete(
-                    self.ai_service.get_ai_response("Ping", {})
+                    self.ai_service.get_ai_response("Hello", {})
                 )
+                test_time = time.time() - start_time
                 # If the service returns a friendly error about missing key, surface it
                 if isinstance(result, str) and result.lower().startswith("perplexity api key not configured"):
                     self.api_test_result.emit(False, "Perplexity API key not configured.")
                     self.error_occurred.emit("Perplexity API key not configured. Please set PERPLEXITY_API_KEY in your .env and restart the app.")
                 else:
-                    # Success
-                    self.api_test_result.emit(True, "Perplexity API is reachable.")
-                    self.response_ready.emit("✅ Perplexity API is reachable.")
+                    # Success - include timing info
+                    success_msg = f"Perplexity API is working! Response time: {test_time:.2f}s"
+                    self.api_test_result.emit(True, success_msg)
+                    self.response_ready.emit(f"✅ {success_msg}\n\n{result}")
             finally:
                 loop.close()
         except Exception as e:
-            self.logger.error(f"API test failed: {e}")
+            test_time = time.time() - start_time if 'start_time' in locals() else 0
+            self.logger.error(f"API test failed after {test_time:.2f}s: {e}")
             self.api_test_result.emit(False, f"API test failed: {e}")
-            self.error_occurred.emit(f"API test failed: {e}")
+            self.error_occurred.emit(f"API test failed after {test_time:.1f}s: {e}")
     
     def handle_special_commands(self, message: str) -> Optional[str]:
         """Handle special trading commands"""
