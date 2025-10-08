@@ -198,6 +198,30 @@ class MainWindow(QMainWindow):
         # Note: Toolbar buttons removed per user request
         # All functionality is available through the menu bar
         pass
+
+    def closeEvent(self, event):
+        """Ensure background services and threads are stopped on close"""
+        try:
+            # Stop data update scheduler if running
+            if hasattr(self, 'data_update_service') and self.data_update_service:
+                try:
+                    self.data_update_service.stop()
+                except Exception:
+                    pass
+            # Cleanup watchlist widget threads/timers
+            if hasattr(self, 'watchlist_widget') and self.watchlist_widget:
+                try:
+                    self.watchlist_widget.cleanup()
+                except Exception:
+                    pass
+            # Optionally cleanup scanner if it has threads
+            if hasattr(self, 'scanner_widget') and hasattr(self.scanner_widget, 'cleanup'):
+                try:
+                    self.scanner_widget.cleanup()
+                except Exception:
+                    pass
+        finally:
+            super().closeEvent(event)
     
     def create_status_bar(self):
         """Create status bar"""
