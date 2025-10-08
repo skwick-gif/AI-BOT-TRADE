@@ -2626,11 +2626,32 @@ class ScannerWidget(QWidget):
         # Settings button
         self.settings_button = QPushButton("⚙️ Settings")
         self.settings_button.clicked.connect(self.open_settings)
+        self.settings_button.setToolTip("Configure scan criteria and presets")
         title_layout.addWidget(self.settings_button)
 
+        # Quick scan button
+        self.quick_scan_button = QPushButton("⚡ Quick Scan")
+        self.quick_scan_button.clicked.connect(self.quick_scan)
+        self.quick_scan_button.setToolTip("Run scan with default settings")
+        self.quick_scan_button.setStyleSheet("""
+            QPushButton {
+                background-color: #3498DB;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980B9;
+            }
+        """)
+        title_layout.addWidget(self.quick_scan_button)
+
         # Scan button
-        self.scan_button = QPushButton("🔍 Start Scan")
+        self.scan_button = QPushButton("🔍 Custom Scan")
         self.scan_button.clicked.connect(self.start_scan)
+        self.scan_button.setToolTip("Run scan with current settings")
         title_layout.addWidget(self.scan_button)
 
         self.stop_button = QPushButton("⏹️ Stop Scan")
@@ -2806,6 +2827,28 @@ class ScannerWidget(QWidget):
         result = dialog.exec()
         # Update criteria status after dialog closes
         self.update_criteria_status()
+    
+    def quick_scan(self):
+        """Run a quick scan with sensible defaults"""
+        try:
+            # Apply default criteria for quick scan
+            self.criteria_widget.min_price_spin.setValue(5.0)
+            self.criteria_widget.max_price_spin.setValue(500.0)
+            self.criteria_widget.min_volume_spin.setValue(1000000)
+            self.criteria_widget.min_change_spin.setValue(2.0)
+            self.criteria_widget.max_change_spin.setValue(20.0)
+            self.criteria_widget.min_rsi_spin.setValue(30)
+            self.criteria_widget.max_rsi_spin.setValue(80)
+            
+            # Enable momentum strategy by default
+            self.criteria_widget.momentum_chk.setChecked(True)
+            
+            # Update status and start scan
+            self.update_criteria_status()
+            self.start_scan()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Quick Scan Error", f"Failed to start quick scan: {e}")
     
     def update_criteria_status(self):
         """Update the criteria status display"""
@@ -3166,6 +3209,46 @@ class ScanSettingsDialog(QDialog):
         line2.setStyleSheet("color: #BDC3C7;")
         layout.addWidget(line2)
         
+        # Quick presets section
+        presets_frame = QFrame()
+        presets_frame.setFrameStyle(QFrame.Shape.Box)
+        presets_frame.setStyleSheet("QFrame { background-color: #F8F9FA; border: 1px solid #DEE2E6; border-radius: 4px; }")
+        presets_layout = QVBoxLayout(presets_frame)
+        
+        presets_title = QLabel("🚀 Quick Presets")
+        presets_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        presets_title.setStyleSheet("color: #495057; margin: 5px;")
+        presets_layout.addWidget(presets_title)
+        
+        presets_buttons_layout = QHBoxLayout()
+        
+        # Conservative preset
+        conservative_btn = QPushButton("🛡️ Conservative")
+        conservative_btn.clicked.connect(self.apply_conservative_preset)
+        conservative_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
+        presets_buttons_layout.addWidget(conservative_btn)
+        
+        # Aggressive preset  
+        aggressive_btn = QPushButton("🔥 Aggressive")
+        aggressive_btn.clicked.connect(self.apply_aggressive_preset)
+        aggressive_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
+        presets_buttons_layout.addWidget(aggressive_btn)
+        
+        # Penny stocks preset
+        penny_btn = QPushButton("💰 Penny Stocks")
+        penny_btn.clicked.connect(self.apply_penny_preset)
+        penny_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
+        presets_buttons_layout.addWidget(penny_btn)
+        
+        # Blue chip preset
+        bluechip_btn = QPushButton("🏛️ Blue Chip")
+        bluechip_btn.clicked.connect(self.apply_bluechip_preset)
+        bluechip_btn.setStyleSheet("QPushButton { padding: 4px 8px; margin: 2px; }")
+        presets_buttons_layout.addWidget(bluechip_btn)
+        
+        presets_layout.addLayout(presets_buttons_layout)
+        layout.addWidget(presets_frame)
+        
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -3239,3 +3322,51 @@ class ScanSettingsDialog(QDialog):
                        self.criteria_widget.momentum_chk, self.criteria_widget.oversold_chk,
                        self.criteria_widget.breakout_chk]:
                 chk.setChecked(False)
+    
+    def apply_conservative_preset(self):
+        """Apply conservative scanning preset"""
+        self.criteria_widget.min_price_spin.setValue(10.0)
+        self.criteria_widget.max_price_spin.setValue(200.0)
+        self.criteria_widget.min_volume_spin.setValue(500000)
+        self.criteria_widget.min_change_spin.setValue(1.0)
+        self.criteria_widget.max_change_spin.setValue(8.0)
+        self.criteria_widget.min_rsi_spin.setValue(40)
+        self.criteria_widget.max_rsi_spin.setValue(70)
+        self.criteria_widget.above_sma20.setChecked(True)
+        self.criteria_widget.value_chk.setChecked(True)
+    
+    def apply_aggressive_preset(self):
+        """Apply aggressive scanning preset"""
+        self.criteria_widget.min_price_spin.setValue(2.0)
+        self.criteria_widget.max_price_spin.setValue(1000.0)
+        self.criteria_widget.min_volume_spin.setValue(2000000)
+        self.criteria_widget.min_change_spin.setValue(5.0)
+        self.criteria_widget.max_change_spin.setValue(50.0)
+        self.criteria_widget.min_rsi_spin.setValue(60)
+        self.criteria_widget.max_rsi_spin.setValue(85)
+        self.criteria_widget.momentum_chk.setChecked(True)
+        self.criteria_widget.breakout_chk.setChecked(True)
+    
+    def apply_penny_preset(self):
+        """Apply penny stocks scanning preset"""
+        self.criteria_widget.min_price_spin.setValue(0.10)
+        self.criteria_widget.max_price_spin.setValue(5.0)
+        self.criteria_widget.min_volume_spin.setValue(1000000)
+        self.criteria_widget.min_change_spin.setValue(10.0)
+        self.criteria_widget.max_change_spin.setValue(100.0)
+        self.criteria_widget.min_rsi_spin.setValue(20)
+        self.criteria_widget.max_rsi_spin.setValue(80)
+        self.criteria_widget.momentum_chk.setChecked(True)
+    
+    def apply_bluechip_preset(self):
+        """Apply blue chip stocks scanning preset"""
+        self.criteria_widget.min_price_spin.setValue(50.0)
+        self.criteria_widget.max_price_spin.setValue(1000.0)
+        self.criteria_widget.min_volume_spin.setValue(1000000)
+        self.criteria_widget.min_change_spin.setValue(0.5)
+        self.criteria_widget.max_change_spin.setValue(5.0)
+        self.criteria_widget.min_rsi_spin.setValue(35)
+        self.criteria_widget.max_rsi_spin.setValue(75)
+        self.criteria_widget.above_sma200.setChecked(True)
+        self.criteria_widget.value_chk.setChecked(True)
+        self.criteria_widget.growth_chk.setChecked(True)
