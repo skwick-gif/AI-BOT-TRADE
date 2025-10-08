@@ -528,13 +528,97 @@ class ScannerWorker(QObject):
                     elif not (sma20_ok and sma50_ok and sma200_ok):
                         passed = False
 
+                    # 🔍 Enhanced Data Quality Filters
+                    if passed:
+                        # Skip penny stocks with unreliable data
+                        if price < 1.0:
+                            passed = False
+                        
+                        # Check for abnormal daily spread (liquidity proxy)
+                        try:
+                            daily_spread_pct = ((latest['high'] - latest['low']) / price) * 100
+                            if daily_spread_pct > 15.0:  # Skip extremely volatile/illiquid stocks
+                                passed = False
+                        except:
+                            pass
+                        
+                        # Volume consistency check - avoid pump & dump
+                        try:
+                            if len(tail) >= 20:
+                                avg_volume_20d = tail['volume'].tail(20).mean()
+                                volume_ratio = volume / avg_volume_20d if avg_volume_20d > 0 else 1
+                                # Skip volume spikes > 10x (potential manipulation)
+                                if volume_ratio > 10.0:
+                                    passed = False
+                                # Also skip very low relative volume (< 0.1x average)
+                                elif volume_ratio < 0.1:
+                                    passed = False
+                        except:
+                            pass
+                        
+                        # Price action quality check
+                        try:
+                            # Skip stocks with extreme gap ups/downs (> 20%)
+                            if len(tail) >= 2:
+                                prev_close = tail['close'].iloc[-2]
+                                gap_pct = ((latest['open'] - prev_close) / prev_close) * 100
+                                if abs(gap_pct) > 20.0:
+                                    passed = False
+                        except:
+                            pass
+
                     # Early continue if base filters fail (keeps performance)
                     if not passed:
                         continue
 
-                    score = float(rsi_val / 100.0 * 10.0)
+                    # 🚀 Enhanced Base Score Calculation
+                    score = 0.0
                     crit_met = 0
                     matched_strategies = []
+                    
+                    # Calculate advanced technical indicators for better scoring
+                    relative_volume = 1.0
+                    price_strength = 0.0
+                    liquidity_score = 0.0
+                    
+                    try:
+                        # Relative Volume Score (0-2)
+                        if len(tail) >= 20:
+                            avg_vol_20d = tail['volume'].tail(20).mean()
+                            relative_volume = min(volume / avg_vol_20d, 5.0) if avg_vol_20d > 0 else 1.0
+                        
+                        # Price Strength vs Multiple Timeframes (0-3)
+                        if close_series is not None and len(close_series) >= 50:
+                            price_vs_sma20 = (price / close_series.tail(20).mean() - 1) * 100
+                            price_vs_sma50 = (price / close_series.tail(50).mean() - 1) * 100
+                            
+                            # Reward consistent strength across timeframes
+                            if price_vs_sma20 > 2 and price_vs_sma50 > 5:
+                                price_strength = 3.0
+                            elif price_vs_sma20 > 0 and price_vs_sma50 > 0:
+                                price_strength = 2.0
+                            elif price_vs_sma20 > 0 or price_vs_sma50 > 0:
+                                price_strength = 1.0
+                        
+                        # Liquidity Score based on spread and volume (0-2)  
+                        daily_spread_pct = ((latest['high'] - latest['low']) / price) * 100
+                        if daily_spread_pct < 2.0 and relative_volume > 1.2:
+                            liquidity_score = 2.0
+                        elif daily_spread_pct < 5.0 and relative_volume > 0.8:
+                            liquidity_score = 1.0
+                            
+                    except Exception:
+                        pass
+                    
+                    # Base score incorporates multiple factors
+                    base_score = (
+                        (rsi_val / 100.0 * 2.0) +  # RSI component (0-2)
+                        (relative_volume * 0.4) +    # Volume component (0-2) 
+                        price_strength +             # Price strength (0-3)
+                        liquidity_score             # Liquidity (0-2)
+                    ) / 9.0 * 10.0  # Normalize to 0-10 scale
+                    
+                    score = base_score
 
                     # Common technicals used by multiple strategies
                     # Compute once defensively
@@ -660,19 +744,77 @@ class ScannerWorker(QObject):
                             mcap_ok = False
                         vol30_ok = vol30_ok
 
-                        # Apply momentum rules and accumulate criteria met (weighted) with breakdown
+                        # 🚀 Enhanced Momentum Rules with Advanced Criteria
+                        
+                        # Calculate advanced momentum indicators
+                        momentum_strength = 0
+                        volume_momentum = False
+                        price_acceleration = False
+                        trend_consistency = False
+                        
+                        try:
+                            # Multi-timeframe momentum strength
+                            if close_series is not None and len(close_series) >= 50:
+                                returns_5d = (price / close_series.iloc[-6] - 1) * 100 if len(close_series) > 5 else 0
+                                returns_20d = (price / close_series.iloc[-21] - 1) * 100 if len(close_series) > 20 else 0
+                                returns_50d = (price / close_series.iloc[-51] - 1) * 100 if len(close_series) > 50 else 0
+                                
+                                # Reward accelerating momentum
+                                if returns_5d > 0 and returns_20d > 0 and returns_50d > 0:
+                                    if returns_5d > returns_20d > returns_50d:
+                                        momentum_strength = 3  # Accelerating
+                                    elif returns_5d > 0 and returns_20d > 0:
+                                        momentum_strength = 2  # Consistent
+                                    else:
+                                        momentum_strength = 1  # Basic uptrend
+                            
+                            # Volume momentum (increasing volume trend)
+                            if len(tail) >= 10 and 'volume' in tail.columns:
+                                vol_recent = tail['volume'].tail(5).mean()
+                                vol_earlier = tail['volume'].iloc[-10:-5].mean()
+                                volume_momentum = vol_recent > vol_earlier * 1.1
+                            
+                            # Price acceleration (rate of change increasing)
+                            if close_series is not None and len(close_series) >= 10:
+                                roc_recent = close_series.pct_change(5).tail(1).iloc[0] * 100
+                                roc_earlier = close_series.pct_change(5).iloc[-6] * 100
+                                price_acceleration = roc_recent > roc_earlier
+                            
+                            # Trend consistency (higher highs, higher lows)
+                            if len(tail) >= 10:
+                                recent_highs = tail['high'].tail(5)
+                                recent_lows = tail['low'].tail(5)
+                                earlier_highs = tail['high'].iloc[-10:-5]
+                                earlier_lows = tail['low'].iloc[-10:-5]
+                                trend_consistency = (recent_highs.min() > earlier_highs.max() and 
+                                                   recent_lows.min() > earlier_lows.max())
+                        except:
+                            pass
+                        
+                        # Enhanced momentum rules with better weighting
                         rules = [
-                            (price > (sma10_eff * 1.015), w.get('price_gt_sma10_1015', 0), 'Price > SMA10*1.015', {'price': price, 'sma10': sma10_eff}),
-                            (price > (sma20_eff * 1.02), w.get('price_gt_sma20_1020', 0), 'Price > SMA20*1.02', {'price': price, 'sma20': sma20_eff}),
-                            ((sma10_eff > (sma20_eff * 1.005)), w.get('sma10_gt_sma20_1005', 0), 'SMA10 > SMA20*1.005', {'sma10': sma10_eff, 'sma20': sma20_eff}),
-                            (50.0 <= rsi_val <= 75.0, w.get('rsi_50_75', 0), 'RSI in [50,75]', {'rsi': rsi_val}),
-                            (bool(vma20_eff) and volume > (vma20_eff * 1.2), w.get('vol_gt_vma20_1_2', 0), 'Vol > VMA20*1.2', {'vol': volume, 'vma20': vma20_eff}),
-                            (atr_ok, w.get('atr14_2_5pct', 0), 'ATR14 in [2%,5%]', {'atr_pct': atr_val_pct}),
-                            (change_pct > 1.0, w.get('daily_change_gt_1', 0), 'Daily %Change > 1%', {'chg_pct': change_pct}),
-                            (macd_pos, w.get('macd_hist_pos', 0), 'MACD Histogram > 0', {}),
-                            (ema_ok, w.get('ema_short_gt_long', 0), 'EMA(short) > EMA(long)', {}),
-                            (mcap_ok, w.get('mcap_gt_100m', 0), 'MarketCap > 100M', {'mcap': marketcap_map.get(symbol_upper)}),
-                            (vol30_ok, w.get('vol30_15_40', 0), 'Volatility 30d in [15%,40%]', {}),
+                            # Core price momentum (higher weights)
+                            (price > (sma10_eff * 1.015), w.get('price_gt_sma10_1015', 2.0), 'Price > SMA10*1.015', {'price': price, 'sma10': sma10_eff}),
+                            (price > (sma20_eff * 1.02), w.get('price_gt_sma20_1020', 2.5), 'Price > SMA20*1.02', {'price': price, 'sma20': sma20_eff}),
+                            ((sma10_eff > (sma20_eff * 1.005)), w.get('sma10_gt_sma20_1005', 2.0), 'SMA10 > SMA20*1.005', {'sma10': sma10_eff, 'sma20': sma20_eff}),
+                            
+                            # Enhanced momentum indicators (NEW!)
+                            (momentum_strength >= 2, w.get('momentum_strength', 3.0), 'Multi-timeframe Momentum', {'strength': momentum_strength}),
+                            (volume_momentum, w.get('volume_momentum', 1.5), 'Increasing Volume Momentum', {}),
+                            (price_acceleration, w.get('price_acceleration', 1.5), 'Price Acceleration', {}),
+                            (trend_consistency, w.get('trend_consistency', 2.0), 'Trend Consistency (HH,HL)', {}),
+                            
+                            # Technical indicators (reweighted)
+                            (50.0 <= rsi_val <= 75.0, w.get('rsi_50_75', 1.5), 'RSI in [50,75]', {'rsi': rsi_val}),
+                            (bool(vma20_eff) and volume > (vma20_eff * 1.2), w.get('vol_gt_vma20_1_2', 1.8), 'Vol > VMA20*1.2', {'vol': volume, 'vma20': vma20_eff}),
+                            (atr_ok, w.get('atr14_2_5pct', 1.0), 'ATR14 in [2%,5%]', {'atr_pct': atr_val_pct if atr_val_pct else 0}),
+                            (change_pct > 1.0, w.get('daily_change_gt_1', 1.2), 'Daily %Change > 1%', {'chg_pct': change_pct}),
+                            (macd_pos, w.get('macd_hist_pos', 1.5), 'MACD Histogram > 0', {}),
+                            (ema_ok, w.get('ema_short_gt_long', 1.3), 'EMA(short) > EMA(long)', {}),
+                            
+                            # Quality filters (lower weights but important)
+                            (mcap_ok, w.get('mcap_gt_100m', 1.0), 'MarketCap > 100M', {'mcap': marketcap_map.get(symbol_upper)}),
+                            (vol30_ok, w.get('vol30_15_40', 0.8), 'Volatility 30d in [15%,40%]', {}),
                         ]
                         crit_m = sum(1 for ok, *_ in rules if ok)
                         score_m = float(sum(weight for ok, weight, *_ in rules if ok))
@@ -683,7 +825,7 @@ class ScannerWorker(QObject):
                         # Breakdown
                         breakdown_m = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules]
 
-                    # Strategy: Value
+                    # Strategy: Value - 🔍 Enhanced with Quality Value Metrics
                     if want_value:
                         vw = criteria.get('value_weights', {})
                         def fval(key):
@@ -706,6 +848,7 @@ class ScannerWorker(QObject):
                         pio = fval('piotroski')
                         insider = fval('insider_buying')
                         mcap_val = marketcap_map.get(symbol_upper)
+                        
                         # Normalize percent-like fields
                         def pct_norm(v):
                             if v is None:
@@ -718,25 +861,91 @@ class ScannerWorker(QObject):
                                 return None
                         roe_n = pct_norm(roe)
                         dy_n = pct_norm(dy)
+                        
+                        # 🚀 Enhanced Value Calculations
+                        value_quality_score = 0
+                        price_discount = 0
+                        financial_strength = False
+                        earnings_quality = False
+                        
+                        try:
+                            # Multi-metric value assessment
+                            value_metrics = []
+                            if pe is not None and pe > 0:
+                                value_metrics.append(min(20/pe, 3.0))  # Higher score for lower PE
+                            if pb is not None and pb > 0:
+                                value_metrics.append(min(2/pb, 3.0))   # Higher score for lower P/B
+                            if eve is not None and eve > 0:
+                                value_metrics.append(min(15/eve, 2.0)) # Higher score for lower EV/EBITDA
+                            
+                            # Calculate composite value quality (0-3 scale)
+                            if value_metrics:
+                                value_quality_score = sum(value_metrics) / len(value_metrics)
+                            
+                            # Price discount from historical levels
+                            if high_52w is not None and low_52w is not None and high_52w > low_52w:
+                                price_range_position = (price - low_52w) / (high_52w - low_52w)
+                                price_discount = 3.0 * (1 - price_range_position)  # Higher score when closer to 52w low
+                            
+                            # Financial strength composite
+                            strength_factors = []
+                            if curr is not None and curr > 1.5:
+                                strength_factors.append(True)
+                            if de is not None and de < 0.3:
+                                strength_factors.append(True)
+                            if roe_n is not None and roe_n > 15:
+                                strength_factors.append(True)
+                            financial_strength = len(strength_factors) >= 2
+                            
+                            # Earnings quality indicators
+                            quality_factors = []
+                            if fcfy is not None and pct_norm(fcfy) > 8:
+                                quality_factors.append(True)
+                            if pio is not None and pio >= 7:
+                                quality_factors.append(True)
+                            if insider is not None and float(insider) > 0:
+                                quality_factors.append(True)
+                            earnings_quality = len(quality_factors) >= 2
+                            
+                        except Exception:
+                            pass
+                        
                         # 52w low from closes
                         near_52w_low = False
                         if low_52w is not None:
                             near_52w_low = price < (low_52w * 1.3)
+                        # Enhanced value rules with better weighting
                         rules_v = [
-                            (pe is not None and 0 < pe < 15.0, vw.get('pe_lt_15', 0), 'PE < 15 & > 0', {'pe': pe}),
-                            (pb is not None and 0 < pb < 1.5, vw.get('pb_lt_1_5', 0), 'P/B < 1.5 & > 0', {'pb': pb}),
-                            (near_52w_low, vw.get('price_lt_52wlow_1_3', 0), 'Price < 1.3×52w Low', {'price': price, '52w_low': low_52w}),
-                            (de is not None and 0 <= de < 0.5, vw.get('de_lt_0_5', 0), 'Debt/Equity < 0.5', {'de': de}),
-                            (curr is not None and curr > 1.2, vw.get('curr_ratio_gt_1_2', 0), 'Current Ratio > 1.2', {'current_ratio': curr}),
-                            (roe_n is not None and roe_n > 10.0, vw.get('roe_gt_10', 0), 'ROE > 10%', {'roe%': roe_n}),
-                            (bv is not None and bv > 0, vw.get('bookvalue_gt_0', 0), 'Book Value > 0', {'book_value': bv}),
-                            (dy_n is not None and dy_n > 2.0, vw.get('div_yield_gt_2', 0), 'Dividend Yield > 2%', {'div_yield%': dy_n}),
-                            (mcap_val is not None and 50_000_000 <= float(mcap_val) <= 5_000_000_000, vw.get('mcap_in_range', 0), 'MarketCap 50M–5B', {'mcap': mcap_val}),
-                            (pe is not None and ind_pe is not None and pe < ind_pe * 0.9, vw.get('pe_lt_industry', 0), 'PE < IndustryPE*0.9', {'pe': pe, 'ind_pe': ind_pe}),
-                            (fcfy is not None and pct_norm(fcfy) > 5.0, vw.get('fcf_yield_gt_5', 0), 'FCF Yield > 5%', {'fcf_yield%': pct_norm(fcfy) if fcfy is not None else None}),
-                            (eve is not None and eve < 10.0, vw.get('ev_ebitda_lt_10', 0), 'EV/EBITDA < 10', {'ev/ebitda': eve}),
-                            (pio is not None and pio > 6, vw.get('piotroski_gt_6', 0), 'Piotroski > 6', {'piotroski': pio}),
-                            (insider is not None and float(insider) > 0, vw.get('insider_buying_pos', 0), 'Insider Buying +', {'insider_trend': insider}),
+                            # Core value metrics (higher weights)
+                            (pe is not None and 0 < pe < 12.0, vw.get('pe_lt_12', 3.0), 'PE < 12 & > 0', {'pe': pe}),
+                            (pb is not None and 0 < pb < 1.2, vw.get('pb_lt_1_2', 2.5), 'P/B < 1.2 & > 0', {'pb': pb}),
+                            (eve is not None and eve < 8.0, vw.get('ev_ebitda_lt_8', 2.0), 'EV/EBITDA < 8', {'ev/ebitda': eve}),
+                            
+                            # Enhanced value indicators (NEW!)
+                            (value_quality_score >= 2.0, vw.get('value_quality_high', 3.5), 'High Value Quality Score', {'score': value_quality_score}),
+                            (price_discount >= 2.0, vw.get('price_discount_high', 2.5), 'High Price Discount', {'discount': price_discount}),
+                            (financial_strength, vw.get('financial_strength', 2.0), 'Strong Financial Position', {}),
+                            (earnings_quality, vw.get('earnings_quality', 2.0), 'High Earnings Quality', {}),
+                            
+                            # Price positioning
+                            (near_52w_low, vw.get('price_lt_52wlow_1_3', 1.8), 'Price < 1.3×52w Low', {'price': price, '52w_low': low_52w}),
+                            # Financial health (reweighted)
+                            (de is not None and 0 <= de < 0.4, vw.get('de_lt_0_4', 1.5), 'Debt/Equity < 0.4', {'de': de}),
+                            (curr is not None and curr > 1.5, vw.get('curr_ratio_gt_1_5', 1.5), 'Current Ratio > 1.5', {'current_ratio': curr}),
+                            (roe_n is not None and roe_n > 12.0, vw.get('roe_gt_12', 1.8), 'ROE > 12%', {'roe%': roe_n}),
+                            
+                            # Income and yield
+                            (dy_n is not None and dy_n > 3.0, vw.get('div_yield_gt_3', 1.5), 'Dividend Yield > 3%', {'div_yield%': dy_n}),
+                            (fcfy is not None and pct_norm(fcfy) > 8.0, vw.get('fcf_yield_gt_8', 2.0), 'FCF Yield > 8%', {'fcf_yield%': pct_norm(fcfy) if fcfy is not None else None}),
+                            
+                            # Quality indicators
+                            (bv is not None and bv > 0, vw.get('bookvalue_gt_0', 1.0), 'Book Value > 0', {'book_value': bv}),
+                            (pio is not None and pio >= 7, vw.get('piotroski_gt_7', 1.8), 'Piotroski >= 7', {'piotroski': pio}),
+                            (insider is not None and float(insider) > 0, vw.get('insider_buying_pos', 1.2), 'Insider Buying +', {'insider_trend': insider}),
+                            
+                            # Market positioning  
+                            (mcap_val is not None and 100_000_000 <= float(mcap_val) <= 10_000_000_000, vw.get('mcap_in_range', 1.0), 'MarketCap 100M–10B', {'mcap': mcap_val}),
+                            (pe is not None and ind_pe is not None and pe < ind_pe * 0.8, vw.get('pe_lt_industry', 1.5), 'PE < IndustryPE*0.8', {'pe': pe, 'ind_pe': ind_pe}),
                         ]
                         crit_v = sum(1 for ok, _wt, *_ in rules_v if ok)
                         score_v = float(sum(weight for ok, weight, *_ in rules_v if ok))
@@ -746,9 +955,59 @@ class ScannerWorker(QObject):
                             score = max(score, score_v)
                         breakdown_v = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules_v]
 
-                    # Strategy: Growth (config-driven)
+                    # Strategy: Growth - 🚀 Enhanced with Growth Quality Metrics
                     if want_growth:
-                        rules_g = []
+                        gw = criteria.get('growth_weights', {})
+                        
+                        # 🔍 Enhanced Growth Calculations
+                        growth_momentum_score = 0
+                        growth_acceleration = False
+                        technical_strength = False
+                        volume_growth = False
+                        
+                        try:
+                            # Multi-timeframe growth momentum (0-4 scale)
+                            if close_series is not None and len(close_series) >= 120:
+                                returns_1m = (price / close_series.iloc[-21] - 1) * 100 if len(close_series) > 20 else 0
+                                returns_3m = (price / close_series.iloc[-64] - 1) * 100 if len(close_series) > 63 else 0
+                                returns_6m = (price / close_series.iloc[-126] - 1) * 100 if len(close_series) > 125 else 0
+                                
+                                # Reward sustained growth acceleration
+                                if returns_1m > 8 and returns_3m > 15 and returns_6m > 25:
+                                    growth_momentum_score = 4  # Exceptional
+                                elif returns_1m > 5 and returns_3m > 10 and returns_6m > 15:
+                                    growth_momentum_score = 3  # Strong
+                                elif returns_1m > 2 and returns_3m > 5:
+                                    growth_momentum_score = 2  # Good
+                                elif returns_1m > 0 and returns_3m > 0:
+                                    growth_momentum_score = 1  # Basic
+                            
+                            # Growth acceleration (rate increasing)
+                            if close_series is not None and len(close_series) >= 60:
+                                returns_recent = close_series.pct_change(20).iloc[-1] * 100
+                                returns_earlier = close_series.pct_change(20).iloc[-21] * 100 
+                                growth_acceleration = returns_recent > returns_earlier and returns_recent > 3
+                            
+                            # Technical strength (multiple indicators aligned)
+                            strength_count = 0
+                            if rsi_val > 55:
+                                strength_count += 1
+                            if macd_pos:
+                                strength_count += 1
+                            if ema_ok:
+                                strength_count += 1
+                            technical_strength = strength_count >= 2
+                            
+                            # Volume growth trend
+                            if len(tail) >= 60 and 'volume' in tail.columns:
+                                vol_recent = tail['volume'].tail(20).mean()
+                                vol_earlier = tail['volume'].iloc[-40:-20].mean()
+                                volume_growth = vol_recent > vol_earlier * 1.15
+                                
+                        except Exception:
+                            pass
+                        
+                        # Classic growth indicators
                         try:
                             # above SMA50/200
                             g_sma50 = price >= float(tail['close'].rolling(50).mean().iloc[-1]) if close_series is not None else False
@@ -758,13 +1017,15 @@ class ScannerWorker(QObject):
                             g_sma200 = price >= float(tail['close'].rolling(200).mean().iloc[-1]) if close_series is not None else False
                         except Exception:
                             g_sma200 = False
+                        
                         # EMA cross, MACD, RSI band
                         g_ema = ema_ok
                         g_macd = macd_pos
                         # RSI band from config
                         g_rsi_min = int(criteria.get('growth_rsi_min') or 50)
-                        g_rsi_max = int(criteria.get('growth_rsi_max') or 70)
+                        g_rsi_max = int(criteria.get('growth_rsi_max') or 75)
                         g_rsi = (g_rsi_min <= rsi_val <= g_rsi_max)
+                        
                         # 3-month momentum
                         g_mom3m = False
                         try:
@@ -773,15 +1034,17 @@ class ScannerWorker(QObject):
                                 g_mom3m = price > float(close_series.iloc[-lookback])
                         except Exception:
                             pass
-                        # Near 52w high (within 15%)
+                        
+                        # Near 52w high (within 20%)
                         g_high = False
                         if high_52w is not None and high_52w > 0:
                             try:
-                                within_pct = float(criteria.get('growth_within_high_pct') or 15.0)
+                                within_pct = float(criteria.get('growth_within_high_pct') or 20.0)
                                 factor = (100.0 - within_pct) / 100.0
                                 g_high = price >= (factor * high_52w)
                             except Exception:
                                 g_high = False
+                        
                         # Volume trend up: vma20 rising vs 20 days ago
                         g_vol_up = False
                         try:
@@ -790,32 +1053,107 @@ class ScannerWorker(QObject):
                                 g_vol_up = float(vma.iloc[-1]) > float(vma.iloc[-20])
                         except Exception:
                             pass
+                        # Enhanced growth rules with weighted scoring
                         rules_g = [
-                            ('Price above SMA50', g_sma50),
-                            ('Price above SMA200', g_sma200),
-                            ('EMA5 > EMA21', g_ema),
-                            ('MACD hist > 0', g_macd),
-                            ('RSI in [50,70]', g_rsi),
-                            ('Price > price 60d ago', g_mom3m),
-                            ('Within 15% of 52w high', g_high),
-                            ('Rising 20d volume MA', g_vol_up)
+                            # Core growth indicators (higher weights)
+                            (g_sma50, gw.get('price_above_sma50', 2.0), 'Price above SMA50', {}),
+                            (g_sma200, gw.get('price_above_sma200', 2.5), 'Price above SMA200', {}),
+                            (g_mom3m, gw.get('momentum_3m', 2.5), 'Price > 3M ago', {}),
+                            
+                            # Enhanced growth indicators (NEW!)
+                            (growth_momentum_score >= 3, gw.get('growth_momentum_strong', 4.0), 'Strong Growth Momentum', {'score': growth_momentum_score}),
+                            (growth_acceleration, gw.get('growth_acceleration', 2.5), 'Growth Acceleration', {}),
+                            (technical_strength, gw.get('technical_strength', 2.0), 'Technical Strength', {}),
+                            (volume_growth, gw.get('volume_growth', 1.8), 'Volume Growth Trend', {}),
+                            
+                            # Technical indicators (reweighted)
+                            (g_ema, gw.get('ema_cross', 1.8), 'EMA Cross Bullish', {}),
+                            (g_macd, gw.get('macd_positive', 1.5), 'MACD Histogram > 0', {}),
+                            (g_rsi, gw.get('rsi_growth_range', 1.5), f'RSI in [{g_rsi_min},{g_rsi_max}]', {'rsi': rsi_val}),
+                            
+                            # Position strength
+                            (g_high, gw.get('near_52w_high', 2.0), 'Near 52W High', {'high_52w': high_52w}),
+                            (g_vol_up, gw.get('volume_trend_up', 1.2), 'Rising Volume Trend', {}),
                         ]
-                        crit_g = sum(1 for _n, ok in rules_g if ok)
-                        score_g = float(crit_g)  # simple count
+                        
+                        crit_g = sum(1 for ok, _wt, *_ in rules_g if ok)
+                        score_g = float(sum(weight for ok, weight, *_ in rules_g if ok))
                         min_g = int(criteria.get('growth_min_criteria') or 4)
                         if crit_g >= min_g:
                             matched_strategies.append('Growth')
                             score = max(score, score_g)
-                        breakdown_g = [{'name': n, 'ok': bool(ok), 'weight': 1, 'details': {}} for (n, ok) in rules_g]
+                        breakdown_g = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules_g]
 
-                    # Strategy: Oversold (config-driven)
+                    # Strategy: Oversold - 🔄 Enhanced with Recovery Potential Metrics
                     if want_oversold:
+                        ow = criteria.get('oversold_weights', {})
+                        
                         # Config-driven thresholds
-                        o_rsi_max = float(criteria.get('oversold_rsi_max') or 30.0)
+                        o_rsi_max = float(criteria.get('oversold_rsi_max') or 35.0)
                         o_below_sma20_pct = float(criteria.get('oversold_below_sma20_pct') or 3.0)
                         o_daily_drop_pct = float(criteria.get('oversold_daily_drop_pct') or 3.0)
                         o_within_low_pct = float(criteria.get('oversold_within_low_pct') or 10.0)
 
+                        # 🔍 Enhanced Oversold Calculations
+                        oversold_severity = 0
+                        recovery_potential = False
+                        support_levels = False
+                        volume_capitulation = False
+                        
+                        try:
+                            # Multi-factor oversold severity (0-4 scale)
+                            severity_factors = 0
+                            if rsi_val <= 25:
+                                severity_factors += 2  # Extreme oversold
+                            elif rsi_val <= 35:
+                                severity_factors += 1  # Moderate oversold
+                                
+                            # Price vs moving averages severity
+                            if close_series is not None and len(close_series) >= 50:
+                                sma20_val = close_series.rolling(20).mean().iloc[-1]
+                                sma50_val = close_series.rolling(50).mean().iloc[-1]
+                                
+                                if price < sma20_val * 0.92:  # > 8% below SMA20
+                                    severity_factors += 1
+                                if price < sma50_val * 0.88:  # > 12% below SMA50
+                                    severity_factors += 1
+                                    
+                            oversold_severity = min(severity_factors, 4)
+                            
+                            # Recovery potential indicators
+                            recovery_signals = []
+                            
+                            # Bullish divergence proxy (price down, RSI stable/up)
+                            if len(tail) >= 10 and close_series is not None:
+                                price_trend = (price / close_series.iloc[-10] - 1) * 100
+                                if price_trend < -5 and rsi_val > 35:  # Price down but RSI not extreme
+                                    recovery_signals.append(True)
+                            
+                            # Support at key levels (bouncing from 52W low area)
+                            if low_52w is not None and price <= low_52w * 1.05:  # Within 5% of 52W low
+                                recovery_signals.append(True)
+                                
+                            # Institutional quality (market cap filter)
+                            if mcap_val is not None and float(mcap_val) > 500_000_000:
+                                recovery_signals.append(True)
+                                
+                            recovery_potential = len(recovery_signals) >= 2
+                            
+                            # Support level identification
+                            if low_52w is not None and high_52w is not None:
+                                support_zone = price <= low_52w * 1.15  # Near support
+                                not_free_fall = price > low_52w * 0.9   # Not in free fall
+                                support_levels = support_zone and not_free_fall
+                            
+                            # Volume capitulation (high volume on down day)
+                            if len(tail) >= 20 and change_pct < -2:
+                                avg_vol = tail['volume'].tail(20).mean()
+                                volume_capitulation = volume > avg_vol * 1.5
+                                
+                        except Exception:
+                            pass
+
+                        # Classic oversold indicators
                         o_rsi = rsi_val <= o_rsi_max
                         o_sma20 = False
                         try:
@@ -832,19 +1170,35 @@ class ScannerWorker(QObject):
                                 o_near_low = price <= (low_52w * (1.0 + (o_within_low_pct / 100.0)))
                             except Exception:
                                 o_near_low = False
+                        
+                        # Enhanced oversold rules with weighted scoring
                         rules_o = [
-                            ('RSI <= 30', o_rsi),
-                            ('Price < 0.97×SMA20', o_sma20),
-                            ('Daily drop <= -3%', o_drop),
-                            ('Within 10% of 52w low', o_near_low)
+                            # Core oversold indicators (higher weights)
+                            (o_rsi, ow.get('rsi_oversold', 2.0), f'RSI <= {o_rsi_max}', {'rsi': rsi_val}),
+                            (o_sma20, ow.get('below_sma20', 1.8), 'Price < SMA20*0.97', {}),
+                            (o_near_low, ow.get('near_52w_low', 2.5), 'Near 52W Low', {'low_52w': low_52w}),
+                            
+                            # Enhanced oversold indicators (NEW!)
+                            (oversold_severity >= 3, ow.get('severe_oversold', 3.5), 'Severe Oversold Condition', {'severity': oversold_severity}),
+                            (recovery_potential, ow.get('recovery_potential', 3.0), 'High Recovery Potential', {}),
+                            (support_levels, ow.get('support_levels', 2.0), 'At Support Levels', {}),
+                            (volume_capitulation, ow.get('volume_capitulation', 1.8), 'Volume Capitulation', {}),
+                            
+                            # Price action
+                            (o_drop, ow.get('daily_drop', 1.5), f'Daily Drop >= {o_daily_drop_pct}%', {'change_pct': change_pct}),
+                            (change_pct <= -5.0, ow.get('big_drop', 2.0), 'Big Daily Drop >= 5%', {'change_pct': change_pct}),
+                            
+                            # Quality filters
+                            (mcap_val is not None and float(mcap_val) > 100_000_000, ow.get('quality_stock', 1.0), 'Quality Stock (>100M)', {'mcap': mcap_val}),
                         ]
-                        crit_o = sum(1 for _n, ok in rules_o if ok)
-                        score_o = float(crit_o)
+                        
+                        crit_o = sum(1 for ok, _wt, *_ in rules_o if ok)
+                        score_o = float(sum(weight for ok, weight, *_ in rules_o if ok))
                         min_o = int(criteria.get('oversold_min_criteria') or 3)
                         if crit_o >= min_o:
                             matched_strategies.append('Oversold')
                             score = max(score, score_o)
-                        breakdown_o = [{'name': n, 'ok': bool(ok), 'weight': 1, 'details': {}} for (n, ok) in rules_o]
+                        breakdown_o = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules_o]
 
                     # If strategies are selected, require at least one match; otherwise keep base
                     require_strategy = (want_momentum or want_value or want_growth or want_oversold)
@@ -975,6 +1329,9 @@ class ScannerWorker(QObject):
                     )
 
             if self.is_scanning:
+                # Apply post-processing filters for final quality control
+                results = self._apply_post_processing_filters(results)
+                
                 self.results_updated.emit(results)
                 self.scan_completed.emit(len(results))
                 extra = (" | " + "; ".join(err_samples)) if errors and err_samples else ""
@@ -2137,3 +2494,46 @@ class ScannerWidget(QWidget):
         except Exception:
             pass
         event.accept()
+
+    def _apply_post_processing_filters(self, results):
+        """Apply final quality control filters to scan results"""
+        if not results:
+            return results
+        
+        try:
+            # Remove exact duplicates
+            seen = set()
+            filtered_results = []
+            for result in results:
+                key = result.get('symbol', '')
+                if key not in seen:
+                    seen.add(key)
+                    filtered_results.append(result)
+            
+            # Filter by minimum score threshold
+            strategy = self.combo_strategy.currentText().lower()
+            min_score_thresholds = {
+                'momentum': 65,
+                'value': 60,
+                'growth': 62,
+                'oversold': 58
+            }
+            min_score = min_score_thresholds.get(strategy, 60)
+            filtered_results = [r for r in filtered_results if r.get('score', 0) >= min_score]
+            
+            # Sort by score descending and limit results
+            filtered_results.sort(key=lambda x: x.get('score', 0), reverse=True)
+            max_results = 50  # Limit to top 50 results
+            filtered_results = filtered_results[:max_results]
+            
+            # Final validation - ensure all required fields exist
+            validated_results = []
+            for result in filtered_results:
+                if all(key in result for key in ['symbol', 'score', 'price', 'change_pct']):
+                    validated_results.append(result)
+            
+            return validated_results
+            
+        except Exception as e:
+            self.logger.warning(f"Post-processing filter error: {e}")
+            return results  # Return original results if filtering fails
