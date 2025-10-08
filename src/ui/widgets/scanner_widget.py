@@ -3166,6 +3166,55 @@ Respond with ONLY a number 0-100 representing investment attractiveness."""
             self.logger.warning(f"Error extracting AI score: {e}")
             return None
 
+    def apply_ai_filter(self):
+        """Apply AI filtering to current scan results"""
+        print("DEBUG: apply_ai_filter method called!")
+        if not hasattr(self, 'results_table') or self.results_table.rowCount() == 0:
+            QMessageBox.information(self, "AI Filter", "No scan results to filter. Please run a scan first.")
+            return
+        
+        # Get current results from table
+        results = []
+        for row in range(self.results_table.rowCount()):
+            symbol_item = self.results_table.item(row, 0)  # Symbol column
+            if symbol_item:
+                symbol = symbol_item.text()
+                results.append({'symbol': symbol, 'row': row})
+        
+        if not results:
+            return
+            
+        # Show progress dialog
+        progress = QProgressDialog("Rating symbols with AI...", "Cancel", 0, len(results), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        
+        # Rate each symbol with AI
+        ai_ratings = []
+        for i, result in enumerate(results):
+            if progress.wasCanceled():
+                break
+                
+            progress.setValue(i)
+            progress.setLabelText(f"Rating {result['symbol']}...")
+            
+            # Request AI rating for this symbol
+            try:
+                self.results_table.request_ai_rating(result['symbol'], result['row'])
+                ai_ratings.append(result['symbol'])
+            except Exception as e:
+                self.logger.error(f"Error rating {result['symbol']}: {e}")
+            
+            # Process events to keep UI responsive
+            QApplication.processEvents()
+        
+        progress.close()
+        
+        if ai_ratings:
+            QMessageBox.information(self, "AI Filter", f"AI rating initiated for {len(ai_ratings)} symbols.\nResults will appear in the AI Rating column.")
+        else:
+            QMessageBox.warning(self, "AI Filter", "No symbols were rated. Check your AI service configuration.")
+
 
 class ScanSettingsDialog(QDialog):
     """Dialog for scan criteria and presets settings"""
@@ -3393,50 +3442,3 @@ class ScanSettingsDialog(QDialog):
         self.criteria_widget.value_chk.setChecked(True)
         self.criteria_widget.growth_chk.setChecked(True)
 
-    def apply_ai_filter(self):
-        """Apply AI filtering to current scan results"""
-        if not hasattr(self, 'results_table') or self.results_table.rowCount() == 0:
-            QMessageBox.information(self, "AI Filter", "No scan results to filter. Please run a scan first.")
-            return
-        
-        # Get current results from table
-        results = []
-        for row in range(self.results_table.rowCount()):
-            symbol_item = self.results_table.item(row, 0)  # Symbol column
-            if symbol_item:
-                symbol = symbol_item.text()
-                results.append({'symbol': symbol, 'row': row})
-        
-        if not results:
-            return
-            
-        # Show progress dialog
-        progress = QProgressDialog("Rating symbols with AI...", "Cancel", 0, len(results), self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.show()
-        
-        # Rate each symbol with AI
-        ai_ratings = []
-        for i, result in enumerate(results):
-            if progress.wasCanceled():
-                break
-                
-            progress.setValue(i)
-            progress.setLabelText(f"Rating {result['symbol']}...")
-            
-            # Request AI rating for this symbol
-            try:
-                self.results_table.request_ai_rating(result['symbol'], result['row'])
-                ai_ratings.append(result['symbol'])
-            except Exception as e:
-                self.logger.error(f"Error rating {result['symbol']}: {e}")
-            
-            # Process events to keep UI responsive
-            QApplication.processEvents()
-        
-        progress.close()
-        
-        if ai_ratings:
-            QMessageBox.information(self, "AI Filter", f"AI rating initiated for {len(ai_ratings)} symbols.\nResults will appear in the AI Rating column.")
-        else:
-            QMessageBox.warning(self, "AI Filter", "No symbols were rated. Check your AI service configuration.")
