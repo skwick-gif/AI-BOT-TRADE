@@ -2623,6 +2623,11 @@ class ScannerWidget(QWidget):
         self.selected_ml_pred = None
         self.use_ml_preds = False
 
+        # Settings button
+        self.settings_button = QPushButton("⚙️ Settings")
+        self.settings_button.clicked.connect(self.open_settings)
+        title_layout.addWidget(self.settings_button)
+
         # Scan button
         self.scan_button = QPushButton("🔍 Start Scan")
         self.scan_button.clicked.connect(self.start_scan)
@@ -2641,6 +2646,12 @@ class ScannerWidget(QWidget):
         layout.addWidget(self.progress_bar)
         self.status_label = QLabel("Ready to scan")
         layout.addWidget(self.status_label)
+        
+        # Criteria status line
+        self.criteria_status_label = QLabel("")
+        self.criteria_status_label.setStyleSheet("color: #7F8C8D; font-size: 10px; margin: 2px;")
+        layout.addWidget(self.criteria_status_label)
+        self.update_criteria_status()
         # Secondary progress line: remaining and ETA
         self.substatus_label = QLabel("")
         self.substatus_label.setStyleSheet("color: gray; font-size: 10px;")
@@ -2678,11 +2689,9 @@ class ScannerWidget(QWidget):
         # Sorting now available by clicking column headers (setSortingEnabled(True) in table)
         layout.addWidget(results_frame, 2)
 
-        # Criteria/presets/strategies block (below results)
+        # Create criteria widget but don't add to main layout (will be in settings dialog)
         self.criteria_widget = ScanCriteriaWidget()
-        self.criteria_widget.setMinimumHeight(90)
-        self.criteria_widget.setMaximumHeight(300)
-        layout.addWidget(self.criteria_widget, 0)
+        # Keep reference for settings dialog
 
         # Load available ML runs (if any)
         self._refresh_ml_runs()
@@ -2789,6 +2798,61 @@ class ScannerWidget(QWidget):
         self.reset_scan_ui()
         self.status_label.setText("Scan stopped")
         self.logger.info("Stock scan stopped")
+    
+    def open_settings(self):
+        """Open settings dialog with scan criteria and presets"""
+        dialog = ScanSettingsDialog(self.criteria_widget, self)
+        dialog.setModal(True)
+        result = dialog.exec()
+        # Update criteria status after dialog closes
+        self.update_criteria_status()
+    
+    def update_criteria_status(self):
+        """Update the criteria status display"""
+        try:
+            criteria = self.criteria_widget.get_criteria()
+            active_strategies = []
+            
+            if criteria.get('strategy_momentum'):
+                active_strategies.append("Momentum")
+            if criteria.get('strategy_value'):
+                active_strategies.append("Value")
+            if criteria.get('strategy_growth'):
+                active_strategies.append("Growth")
+            if criteria.get('strategy_oversold'):
+                active_strategies.append("Oversold")
+            if criteria.get('strategy_breakout'):
+                active_strategies.append("Breakout")
+            
+            # Build status text
+            status_parts = []
+            
+            # Price range
+            min_price = criteria.get('min_price', 1)
+            max_price = criteria.get('max_price', 1000)
+            if min_price > 1 or max_price < 1000:
+                status_parts.append(f"Price: ${min_price:.1f}-${max_price:.1f}")
+            
+            # Volume
+            min_vol = criteria.get('min_volume', 100000)
+            if min_vol > 100000:
+                status_parts.append(f"Vol: {min_vol:,}+")
+            
+            # Strategies
+            if active_strategies:
+                status_parts.append(f"Strategies: {', '.join(active_strategies)}")
+            else:
+                status_parts.append("No strategies selected")
+            
+            # AI Analysis
+            if criteria.get('ai_analysis_enabled'):
+                status_parts.append("AI Analysis: ON")
+            
+            status_text = " | ".join(status_parts)
+            self.criteria_status_label.setText(f"Current Settings: {status_text}")
+            
+        except Exception as e:
+            self.criteria_status_label.setText("Settings: Error reading criteria")
     
     def update_progress(self, progress: int):
         """Update scan progress"""
@@ -3046,3 +3110,132 @@ Respond with ONLY a number 0-100 representing investment attractiveness."""
         except Exception as e:
             self.logger.warning(f"Error extracting AI score: {e}")
             return None
+
+
+class ScanSettingsDialog(QDialog):
+    """Dialog for scan criteria and presets settings"""
+    
+    def __init__(self, criteria_widget, parent=None):
+        super().__init__(parent)
+        self.criteria_widget = criteria_widget
+        self.setWindowTitle("🔧 Scanner Settings & Presets")
+        self.setMinimumSize(900, 700)
+        self.resize(1000, 800)
+        self.setup_ui()
+    
+    def setup_ui(self):
+        """Setup the settings dialog UI"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        
+        title = QLabel("Scanner Configuration")
+        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title.setStyleSheet("color: #2C3E50; margin-bottom: 10px;")
+        header_layout.addWidget(title)
+        
+        header_layout.addStretch()
+        
+        # Info label
+        info_label = QLabel("Configure scan criteria, strategies, and use quick presets")
+        info_label.setStyleSheet("color: #7F8C8D; font-size: 11px;")
+        header_layout.addWidget(info_label)
+        
+        layout.addLayout(header_layout)
+        
+        # Separator line
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        line.setStyleSheet("color: #BDC3C7;")
+        layout.addWidget(line)
+        
+        # Add the criteria widget to the dialog
+        scroll_area = QWidget()
+        scroll_layout = QVBoxLayout(scroll_area)
+        scroll_layout.addWidget(self.criteria_widget)
+        layout.addWidget(scroll_area, 1)  # Give it stretch
+        
+        # Separator line
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setFrameShadow(QFrame.Shadow.Sunken)
+        line2.setStyleSheet("color: #BDC3C7;")
+        layout.addWidget(line2)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        # Reset button
+        reset_button = QPushButton("🔄 Reset All")
+        reset_button.setToolTip("Reset all criteria to default values")
+        reset_button.clicked.connect(self.reset_settings)
+        reset_button.setStyleSheet("""
+            QPushButton {
+                padding: 8px 16px;
+                background-color: #E74C3C;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #C0392B;
+            }
+        """)
+        button_layout.addWidget(reset_button)
+        
+        # Close button
+        close_button = QPushButton("✅ Apply & Close")
+        close_button.clicked.connect(self.accept)
+        close_button.setStyleSheet("""
+            QPushButton {
+                padding: 8px 16px;
+                background-color: #27AE60;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+        """)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+    
+    def reset_settings(self):
+        """Reset all settings to defaults"""
+        reply = QMessageBox.question(
+            self, 
+            "Reset Settings",
+            "Are you sure you want to reset all scan criteria to default values?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Reset basic criteria
+            self.criteria_widget.min_price_spin.setValue(1.0)
+            self.criteria_widget.max_price_spin.setValue(1000.0)
+            self.criteria_widget.min_volume_spin.setValue(100000)
+            self.criteria_widget.min_change_spin.setValue(-50.0)
+            self.criteria_widget.max_change_spin.setValue(50.0)
+            self.criteria_widget.min_rsi_spin.setValue(0)
+            self.criteria_widget.max_rsi_spin.setValue(100)
+            
+            # Reset checkboxes
+            self.criteria_widget.above_sma20.setChecked(False)
+            self.criteria_widget.above_sma50.setChecked(False)
+            self.criteria_widget.above_sma200.setChecked(False)
+            
+            # Reset strategy checkboxes
+            for chk in [self.criteria_widget.growth_chk, self.criteria_widget.value_chk, 
+                       self.criteria_widget.momentum_chk, self.criteria_widget.oversold_chk,
+                       self.criteria_widget.breakout_chk]:
+                chk.setChecked(False)
