@@ -1572,8 +1572,9 @@ class ScanCriteriaWidget(QFrame):
         self.create_value_group()
         self.create_growth_group()
         self.create_oversold_group()
+        self.create_breakout_group()
         # Start hidden
-        for g in [self.momentum_group, self.value_group, self.growth_group, self.oversold_group]:
+        for g in [self.momentum_group, self.value_group, self.growth_group, self.oversold_group, self.breakout_group]:
             g.setVisible(False)
 
         # Right panel: only scroll area for strategy configs
@@ -1587,9 +1588,9 @@ class ScanCriteriaWidget(QFrame):
         self.strategy_configs_area.setWidgetResizable(True)
         self.strategy_configs_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.strategy_configs_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.strategy_configs_area.setMinimumHeight(320)
+        self.strategy_configs_area.setMinimumHeight(180)
         # Allow taller area to show full strategy configs
-        self.strategy_configs_area.setMaximumHeight(900)
+        self.strategy_configs_area.setMaximumHeight(400)
         cfg_container = QWidget()
         cfg_layout = QVBoxLayout(cfg_container)
         cfg_layout.setContentsMargins(6, 6, 6, 6)
@@ -1598,6 +1599,7 @@ class ScanCriteriaWidget(QFrame):
         cfg_layout.addWidget(self.value_group)
         cfg_layout.addWidget(self.growth_group)
         cfg_layout.addWidget(self.oversold_group)
+        cfg_layout.addWidget(self.breakout_group)
         cfg_layout.addStretch(1)
         self.strategy_configs_area.setWidget(cfg_container)
         # Always keep visible so configuration is reachable
@@ -1644,6 +1646,7 @@ class ScanCriteriaWidget(QFrame):
             'value': getattr(self, 'value_group', None),
             'growth': getattr(self, 'growth_group', None),
             'oversold': getattr(self, 'oversold_group', None),
+            'breakout': getattr(self, 'breakout_group', None),
         }
         grp = group_map.get(name)
         if grp is not None:
@@ -1787,6 +1790,24 @@ class ScanCriteriaWidget(QFrame):
         form.addRow("Daily drop ≥:", self.o_daily_drop_pct)
         form.addRow("Within X% of 52w low:", self.o_within_low_pct)
     
+    def create_breakout_group(self):
+        """Create Breakout strategy configuration."""
+        self.breakout_group = QGroupBox("Breakout Strategy")
+        form = QFormLayout(self.breakout_group)
+        # Enable toggle
+        self.breakout_enable = QCheckBox("Enable Breakout scoring")
+        self.breakout_enable.setChecked(False)
+        form.addRow(self.breakout_enable)
+        # Thresholds
+        self.b_min_criteria = QSpinBox(); self.b_min_criteria.setRange(0, 10); self.b_min_criteria.setValue(4)
+        self.b_volume_factor = QDoubleSpinBox(); self.b_volume_factor.setRange(1.0, 10.0); self.b_volume_factor.setValue(2.0); self.b_volume_factor.setSingleStep(0.1)
+        self.b_near_high_pct = QDoubleSpinBox(); self.b_near_high_pct.setRange(0, 20); self.b_near_high_pct.setValue(5); self.b_near_high_pct.setSuffix("%")
+        self.b_min_change = QDoubleSpinBox(); self.b_min_change.setRange(0, 50); self.b_min_change.setValue(3); self.b_min_change.setSuffix("%")
+        form.addRow("Min criteria:", self.b_min_criteria)
+        form.addRow("Volume factor ≥:", self.b_volume_factor)
+        form.addRow("Within % of 52w high:", self.b_near_high_pct)
+        form.addRow("Min daily change:", self.b_min_change)
+    
     def create_preset_buttons(self):
         """Create preset scan buttons"""
         self.preset_frame = QFrame()
@@ -1820,6 +1841,7 @@ class ScanCriteriaWidget(QFrame):
         self.value_chk = QCheckBox("Value")
         self.momentum_chk = QCheckBox("Momentum")
         self.oversold_chk = QCheckBox("Oversold")
+        self.breakout_chk = QCheckBox("Breakout")
 
         def add_preset_row(text: str, callback, chk: QCheckBox):
             row = QWidget()
@@ -1845,6 +1867,7 @@ class ScanCriteriaWidget(QFrame):
         add_preset_row("💎 Value Stocks", self.load_value_preset, self.value_chk)
         add_preset_row("📈 Momentum", self.load_momentum_preset, self.momentum_chk)
         add_preset_row("🔻 Oversold", self.load_oversold_preset, self.oversold_chk)
+        add_preset_row("💥 Breakout", self.load_breakout_preset, self.breakout_chk)
 
         button_layout.addStretch(1)
         layout.addLayout(button_layout)
@@ -2021,6 +2044,18 @@ class ScanCriteriaWidget(QFrame):
         self.min_change_spin.setValue(-10)
         self.max_change_spin.setValue(-2)
     
+    def load_breakout_preset(self):
+        """Load breakout preset"""
+        self.min_price_spin.setValue(5)
+        self.max_price_spin.setValue(500)
+        self.min_volume_spin.setValue(2000000)  # High volume for breakouts
+        self.min_change_spin.setValue(5)  # Strong positive movement
+        self.max_change_spin.setValue(50)
+        self.min_rsi_spin.setValue(60)  # Above neutral
+        self.max_rsi_spin.setValue(85)
+        self.above_sma20.setChecked(True)  # Above key moving averages
+        self.above_sma50.setChecked(True)
+    
     def get_criteria(self) -> dict:
         """Get current scan criteria"""
         crit = {
@@ -2098,6 +2133,12 @@ class ScanCriteriaWidget(QFrame):
         crit['oversold_below_sma20_pct'] = getattr(self, 'o_below_sma20_pct', QDoubleSpinBox()).value()
         crit['oversold_daily_drop_pct'] = getattr(self, 'o_daily_drop_pct', QDoubleSpinBox()).value()
         crit['oversold_within_low_pct'] = getattr(self, 'o_within_low_pct', QDoubleSpinBox()).value()
+        # Breakout config
+        crit['breakout_enabled'] = getattr(self, 'breakout_enable', QCheckBox()).isChecked()
+        crit['breakout_min_criteria'] = getattr(self, 'b_min_criteria', QSpinBox()).value()
+        crit['breakout_volume_factor'] = getattr(self, 'b_volume_factor', QDoubleSpinBox()).value()
+        crit['breakout_near_high_pct'] = getattr(self, 'b_near_high_pct', QDoubleSpinBox()).value()
+        crit['breakout_min_change'] = getattr(self, 'b_min_change', QDoubleSpinBox()).value()
         return crit
 
 
@@ -2157,6 +2198,9 @@ class ScanResultsTable(QTableWidget):
         self.setColumnWidth(16, 90)   # AI Rating
         self.setColumnWidth(17, 88)   # Actions
         # Removed P/E and Market Cap columns in this build
+        
+        # Set row height for more compact display
+        self.verticalHeader().setDefaultSectionSize(24)
         
         # Enable sorting
         self.setSortingEnabled(True)
@@ -2618,14 +2662,7 @@ class ScannerWidget(QWidget):
         results_title.setFont(f)
         hb.addWidget(results_title)
         hb.addStretch(1)
-        # Quick sort buttons (Score up/down)
-        btn_sort_down = QPushButton("Score ↓")
-        btn_sort_up = QPushButton("Score ↑")
-        for b in (btn_sort_down, btn_sort_up):
-            b.setFixedHeight(26)
-            b.setStyleSheet("QPushButton { font-size: 11px; padding: 2px 8px; }")
-        hb.addWidget(btn_sort_down)
-        hb.addWidget(btn_sort_up)
+        # Removed sort buttons - sorting now available by clicking column headers
         results_layout.addWidget(header_bar)
         self.results_table = ScanResultsTable()
         self.results_table.setFont(QFont("Arial", 9))
@@ -2638,14 +2675,13 @@ class ScannerWidget(QWidget):
         except Exception:
             pass
         results_layout.addWidget(self.results_table)
-        # Connect sort buttons (Score is column 5)
-        btn_sort_down.clicked.connect(lambda: self.results_table.sortItems(5, Qt.SortOrder.DescendingOrder))
-        btn_sort_up.clicked.connect(lambda: self.results_table.sortItems(5, Qt.SortOrder.AscendingOrder))
+        # Sorting now available by clicking column headers (setSortingEnabled(True) in table)
         layout.addWidget(results_frame, 2)
 
         # Criteria/presets/strategies block (below results)
         self.criteria_widget = ScanCriteriaWidget()
-        self.criteria_widget.setMinimumHeight(180)
+        self.criteria_widget.setMinimumHeight(90)
+        self.criteria_widget.setMaximumHeight(300)
         layout.addWidget(self.criteria_widget, 0)
 
         # Load available ML runs (if any)
@@ -2726,12 +2762,14 @@ class ScannerWidget(QWidget):
                 show_v = bool(criteria.get('strategy_value') or criteria.get('value_enabled'))
                 show_g = bool(criteria.get('strategy_growth'))
                 show_o = bool(criteria.get('strategy_oversold'))
+                show_b = bool(criteria.get('strategy_breakout'))
                 self.results_table.setColumnHidden(7, not show_m)
                 self.results_table.setColumnHidden(8, not show_v)
                 self.results_table.setColumnHidden(9, not show_g)
                 self.results_table.setColumnHidden(10, not show_o)
+                self.results_table.setColumnHidden(11, not show_b)
                 # Hide overall Score if no strategies at all
-                self.results_table.setColumnHidden(5, not (show_m or show_v or show_g or show_o))
+                self.results_table.setColumnHidden(5, not (show_m or show_v or show_g or show_o or show_b))
             except Exception:
                 pass
             

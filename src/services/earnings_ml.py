@@ -10,9 +10,15 @@ from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+try:
+    from sklearn.linear_model import LogisticRegression
+    import joblib
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    LogisticRegression = None
+    joblib = None
 from pathlib import Path
-import joblib
 
 
 def build_features(prices: pd.DataFrame) -> np.ndarray:
@@ -51,6 +57,8 @@ def predict_half_day_direction(
 
     Note: This is a heuristic demo; for production use, train offline with proper labels.
     """
+    if not SKLEARN_AVAILABLE:
+        return {"prediction": 0.5, "confidence": 0.0, "error": "sklearn not available"}
     # Try saved model first
     model = load_saved_model(symbol)
     prices = fetch_recent_prices_yf(symbol, end=event_time)
@@ -107,12 +115,14 @@ def _model_dir() -> Path:
 def _model_path(symbol: str) -> Path:
     return _model_dir() / f"lr_{symbol.upper()}.joblib"
 
-def save_model(symbol: str, model: LogisticRegression) -> Path:
+def save_model(symbol: str, model) -> Path:
     path = _model_path(symbol)
     joblib.dump(model, path)
     return path
 
-def load_saved_model(symbol: str) -> Optional[LogisticRegression]:
+def load_saved_model(symbol: str):
+    if not SKLEARN_AVAILABLE:
+        return None
     path = _model_path(symbol)
     if path.exists():
         try:
@@ -123,6 +133,8 @@ def load_saved_model(symbol: str) -> Optional[LogisticRegression]:
 
 def train_symbol_model(symbol: str, end_time: dt.datetime, lookback_days: int = 180) -> Dict[str, Any]:
     """Train and persist a per-symbol logistic model using recent history."""
+    if not SKLEARN_AVAILABLE:
+        return {"ok": False, "error": "sklearn not available"}
     # fetch longer window
     import yfinance as yf
     start = end_time - dt.timedelta(days=lookback_days)
