@@ -30,12 +30,26 @@ def build_numeric_score_prompt(
     sym = symbol.upper().strip()
     p = (profile or "").strip().lower()
 
+    # AI Trading Profiles (Time-based)
     if p == "intraday":
         focus = "for intraday trading horizon (today, next hours). Focus on price action, momentum, and near-term catalysts. Ignore long-term factors."
     elif p == "swing":
         focus = "for swing trading horizon (days to weeks). Consider trend, momentum, and upcoming catalysts."
     elif p == "long-term" or p == "long term":
         focus = "for long-term horizon (months+). Emphasize fundamentals and macro context."
+    
+    # Scanner Strategy Profiles (Style-based)
+    elif p == "momentum":
+        focus = "for momentum trading strategy. Focus on price acceleration, volume spikes, moving average breakouts, and trend strength indicators."
+    elif p == "value":
+        focus = "for value investing strategy. Focus on P/E ratios, book value, dividend yield, and fundamental undervaluation vs peers."
+    elif p == "growth":
+        focus = "for growth investing strategy. Focus on revenue growth, earnings acceleration, market expansion, and innovation potential."
+    elif p == "oversold":
+        focus = "for oversold/mean reversion strategy. Focus on RSI, Bollinger Bands, recent sell-offs, and bounce potential from support levels."
+    elif p == "breakout":
+        focus = "for breakout trading strategy. Focus on resistance breaks, volume confirmation, chart patterns, and continuation signals."
+    
     else:
         focus = "for short-term trading horizon."
 

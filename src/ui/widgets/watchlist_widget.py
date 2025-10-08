@@ -87,15 +87,15 @@ class WatchlistTable(QTableWidget):
             btn.setAutoRaise(False)  # Make button more visible
             btn.setStyleSheet("""
                 QToolButton {
-                    font-size: 10px; 
+                    font-size: 8px; 
                     font-weight: bold;
-                    padding: 4px 6px;
+                    padding: 2px 3px;
                     border: 1px solid #ccc;
                     background-color: #f8f9fa;
-                    border-radius: 4px;
+                    border-radius: 3px;
                     color: #333;
-                    min-width: 20px;
-                    min-height: 20px;
+                    min-width: 18px;
+                    min-height: 18px;
                 }
                 QToolButton:hover {
                     background-color: #e9ecef;
@@ -110,11 +110,11 @@ class WatchlistTable(QTableWidget):
             """)
             return btn
         
-        ai_btn = mk_btn("Ask AI", "AI")
+        ai_btn = mk_btn("Ask AI", "🤖")
         ai_btn.clicked.connect(lambda: self.tools_action.emit('ai', symbol))
         hl.addWidget(ai_btn)
         
-        chart_btn = mk_btn("Open Chart", "�")
+        chart_btn = mk_btn("Open Chart", "📊")
         chart_btn.clicked.connect(lambda: self.tools_action.emit('chart', symbol))
         hl.addWidget(chart_btn)
         
@@ -423,15 +423,15 @@ class WatchlistTable(QTableWidget):
             btn.setAutoRaise(False)
             btn.setStyleSheet("""
                 QToolButton {
-                    font-size: 10px; 
+                    font-size: 8px; 
                     font-weight: bold;
-                    padding: 4px 6px;
+                    padding: 2px 3px;
                     border: 1px solid #ccc;
                     background-color: #f8f9fa;
-                    border-radius: 4px;
+                    border-radius: 3px;
                     color: #333;
-                    min-width: 20px;
-                    min-height: 20px;
+                    min-width: 18px;
+                    min-height: 18px;
                 }
                 QToolButton:hover {
                     background-color: #e9ecef;
@@ -461,36 +461,6 @@ class WatchlistTable(QTableWidget):
         }
         return True
 
-
-class WatchlistDetails(QFrame):
-    """Details panel for selected symbol"""
-    ask_ai_clicked = pyqtSignal(str)
-    chart_clicked = pyqtSignal(str)
-
-    def __init__(self):
-        super().__init__()
-        self.current_symbol = None
-        self.setup_ui()
-
-    def setup_ui(self):
-        """Setup minimal details panel"""
-        self.setFrameStyle(QFrame.Shape.Box)
-        self.setMaximumHeight(50)
-        
-        layout = QVBoxLayout(self)
-        
-        # Just a simple label showing this is a placeholder
-        self.info_label = QLabel("Select a symbol from the table above to see AI analysis")
-        self.info_label.setStyleSheet("color: #666; font-style: italic; text-align: center;")
-        layout.addWidget(self.info_label)
-
-    def update_details(self, symbol: str, data: dict):
-        """Update details for selected symbol"""
-        self.current_symbol = symbol
-        if symbol:
-            self.info_label.setText(f"Selected: {symbol} - AI analysis available in table columns")
-        else:
-            self.info_label.setText("Select a symbol from the table above to see AI analysis")
 
 
 class WatchlistWidget(QWidget):
@@ -629,42 +599,10 @@ class WatchlistWidget(QWidget):
         
         splitter.addWidget(table_frame)
         
-        # Details panel
-        self.details_panel = WatchlistDetails()
-        self.details_panel.ask_ai_clicked.connect(self._handle_ask_ai)
-        self.details_panel.chart_clicked.connect(self._handle_open_chart)
-        splitter.addWidget(self.details_panel)
-        
-        splitter.setSizes([400, 50])  # Give more space to table, less to details
+        # No details panel - removed for cleaner UI
+        splitter.setSizes([400])  # Full space to table
         layout.addWidget(splitter)
-        
-        # AI Statistics panel
-        stats_frame = QFrame()
-        stats_frame.setFrameStyle(QFrame.Shape.Box)
-        stats_frame.setMaximumHeight(80)
-        stats_layout = QHBoxLayout(stats_frame)
-        
-        self.ai_stats_label = QLabel("AI Stats: No ratings yet")
-        self.ai_stats_label.setStyleSheet("color: #666; font-size: 11px;")
-        stats_layout.addWidget(self.ai_stats_label)
-        
-        stats_layout.addStretch()
-        
-        # Auto-refresh toggle
-        from PyQt6.QtWidgets import QCheckBox
-        self.auto_refresh_cb = QCheckBox("Auto-refresh AI (5min)")
-        self.auto_refresh_cb.setToolTip("Automatically refresh AI ratings every 5 minutes")
-        self.auto_refresh_cb.toggled.connect(self.toggle_auto_refresh)
-        stats_layout.addWidget(self.auto_refresh_cb)
-        
-        layout.addWidget(stats_frame)
-        
-        # Auto-refresh timer
-        self.auto_refresh_timer = QTimer()
-        self.auto_refresh_timer.timeout.connect(self.auto_refresh_ai)
-        
-        # Update stats initially
-        self.update_ai_stats()
+
 
     def _handle_tools_action(self, action: str, symbol: str):
         """Handle per-row tools icon actions: AI and Chart"""
@@ -686,10 +624,14 @@ class WatchlistWidget(QWidget):
             return
         
         try:
+            if AIService is None:
+                QMessageBox.warning(self, "AI Service", "AI Service is not available.\nPlease check your configuration.")
+                return
             self.watchlist_table.request_ai_rating(symbol, row)
             self.logger.info(f"AI rating requested for {symbol}")
         except Exception as e:
             self.logger.error(f"Error requesting AI rating for {symbol}: {e}")
+            QMessageBox.warning(self, "AI Error", f"Failed to get AI rating for {symbol}:\n{str(e)[:100]}")
 
     def _handle_open_chart(self, symbol: str):
         """Handle chart opening for symbol"""
@@ -742,9 +684,8 @@ class WatchlistWidget(QWidget):
 
     def on_symbol_selected(self, symbol: str):
         """Handle symbol selection"""
-        if symbol in self.watchlist_table.symbol_data:
-            data = self.watchlist_table.symbol_data[symbol].get('data', {})
-            self.details_panel.update_details(symbol, data)
+        # Details panel removed - no action needed
+        pass
 
     def update_data(self):
         """Update data from data worker"""
@@ -880,64 +821,9 @@ class WatchlistWidget(QWidget):
                 
                 self.watchlist_table.setRowHidden(row, should_hide)
     
-    def update_ai_stats(self):
-        """Update AI statistics display"""
-        symbols = self.watchlist_table.get_symbols()
-        if not symbols:
-            self.ai_stats_label.setText("AI Stats: No symbols")
-            return
-        
-        buy_count = sell_count = hold_count = no_rating = 0
-        total_rating = 0
-        rated_count = 0
-        
-        for symbol in symbols:
-            symbol_data = self.watchlist_table.symbol_data.get(symbol, {})
-            ai_prediction = symbol_data.get('ai_prediction')
-            ai_rating = symbol_data.get('ai_rating')
-            
-            if ai_prediction and ai_prediction != "-":
-                if ai_prediction.startswith("BUY"):
-                    buy_count += 1
-                elif ai_prediction.startswith("SELL"):
-                    sell_count += 1
-                elif ai_prediction.startswith("HOLD"):
-                    hold_count += 1
-            else:
-                no_rating += 1
-            
-            if ai_rating and ai_rating != "-" and "/" in ai_rating:
-                try:
-                    rating_val = float(ai_rating.split("/")[0])
-                    total_rating += rating_val
-                    rated_count += 1
-                except:
-                    pass
-        
-        avg_rating = total_rating / rated_count if rated_count > 0 else 0
-        
-        stats_text = f"AI Stats: {len(symbols)} symbols | "
-        if rated_count > 0:
-            stats_text += f"Avg: {avg_rating:.1f}/10 | "
-        stats_text += f"BUY: {buy_count}, SELL: {sell_count}, HOLD: {hold_count}, No Rating: {no_rating}"
-        
-        self.ai_stats_label.setText(stats_text)
+
     
-    def toggle_auto_refresh(self, enabled):
-        """Toggle auto-refresh of AI ratings"""
-        if enabled:
-            self.auto_refresh_timer.start(300000)  # 5 minutes
-            self.logger.info("Auto-refresh AI enabled (5 min intervals)")
-        else:
-            self.auto_refresh_timer.stop()
-            self.logger.info("Auto-refresh AI disabled")
-    
-    def auto_refresh_ai(self):
-        """Automatically refresh AI ratings for all symbols"""
-        symbols = self.watchlist_table.get_symbols()
-        if symbols:
-            self.logger.info(f"Auto-refreshing AI ratings for {len(symbols)} symbols")
-            self.rate_all_symbols()
+
 
     def on_tab_activated(self):
         """Called when tab becomes active"""
@@ -959,8 +845,7 @@ class WatchlistWidget(QWidget):
                 row = self.watchlist_table.symbol_data[symbol]['row']
                 self.watchlist_table.clearSelection()
                 self.watchlist_table.selectRow(row)
-                data = self.watchlist_table.symbol_data[symbol].get('data', {})
-                self.details_panel.update_details(symbol, data)
+                # Details panel removed - no update needed
             
             self.logger.info(f"Added symbol from scanner: {symbol}")
             return True
@@ -970,8 +855,7 @@ class WatchlistWidget(QWidget):
         """Stop timers and threads gracefully"""
         if hasattr(self, 'update_timer'):
             self.update_timer.stop()
-        if hasattr(self, 'auto_refresh_timer'):
-            self.auto_refresh_timer.stop()
+
         if hasattr(self, 'batch_timer'):
             self.batch_timer.stop()
         if self.data_worker and hasattr(self.data_worker, 'stop_monitoring'):

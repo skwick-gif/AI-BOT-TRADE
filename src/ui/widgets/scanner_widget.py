@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QFrame, QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
     QTabWidget, QFormLayout, QCheckBox, QGroupBox, QHeaderView,
-    QProgressBar, QTextEdit, QSplitter, QMessageBox, QDialog
+    QProgressBar, QTextEdit, QSplitter, QMessageBox, QDialog,
+    QProgressDialog, QApplication
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QObject
 from PyQt6.QtGui import QFont, QColor
@@ -122,19 +123,20 @@ class ChartDialog(QDialog):
             axv = self.fig.add_subplot(gs[1], sharex=ax)
             axr = self.fig.add_subplot(gs[2], sharex=ax)
 
-            dates = plot['date']
+            dates = pd.to_datetime(plot['date'])
             closes = plot['close'].astype(float)
             ctype = self.chart_type.currentText()
+            
+            # Convert to matplotlib date numbers for all charts
+            x_dates = mdates.date2num(dates)
+            width = (x_dates[1] - x_dates[0]) * 0.8 if len(x_dates) > 1 else 0.8
 
             if ctype == 'Candlestick' and {'open','high','low','close'}.issubset(set(plot.columns)):
                 # Manual candlesticks
                 try:
-                    x = mdates.date2num(pd.to_datetime(dates))
-                    # Slightly larger candles for clarity
-                    width = (x[1] - x[0]) * 0.8 if len(x) > 1 else 0.8
                     up_color = '#00C851'    # Brighter green for up moves
                     down_color = '#FF4444'  # Brighter red for down moves
-                    for xi, o, h, l, c in zip(x, plot['open'], plot['high'], plot['low'], plot['close']):
+                    for xi, o, h, l, c in zip(x_dates, plot['open'], plot['high'], plot['low'], plot['close']):
                         color = up_color if c >= o else down_color
                         # Thicker wicks for better visibility
                         ax.vlines(xi, l, h, color=color, linewidth=1.5, alpha=0.8)
@@ -147,16 +149,16 @@ class ChartDialog(QDialog):
                                                                      edgecolor=color, linewidth=0.5)
                         )
                 except Exception:
-                    ax.plot(dates, closes, color='steelblue', label='Close')
+                    ax.plot(x_dates, closes, color='steelblue', label='Close')
             else:
                 # Line chart
-                ax.plot(dates, closes, color='steelblue', label='Close')
+                ax.plot(x_dates, closes, color='steelblue', label='Close')
 
             # EMA overlays on price
             if self.show_ema5.isChecked():
-                ax.plot(dates, closes.ewm(span=5, adjust=False).mean(), color='orange', label='EMA5')
+                ax.plot(x_dates, closes.ewm(span=5, adjust=False).mean(), color='orange', label='EMA5')
             if self.show_ema10.isChecked():
-                ax.plot(dates, closes.ewm(span=10, adjust=False).mean(), color='magenta', label='EMA10')
+                ax.plot(x_dates, closes.ewm(span=10, adjust=False).mean(), color='magenta', label='EMA10')
             # Build legend including candle colors and overlays
             try:
                 from matplotlib.patches import Patch
@@ -171,8 +173,12 @@ class ChartDialog(QDialog):
             ax.grid(True, alpha=0.3)
             ax.set_title(f"{self.symbol} ({tf})")
 
-            # Volume subplot
-            axv.bar(dates, plot['volume'].astype(float), color='lightgray', width=0.8)
+            # Volume subplot - use same x-axis as main chart
+            try:
+                axv.bar(x_dates, plot['volume'].astype(float), color='lightgray', width=width, align='center')
+            except Exception as e:
+                # Fallback to simple date bars
+                axv.bar(dates, plot['volume'].astype(float), color='lightgray', width=0.8)
             axv.set_ylabel('Vol', fontsize=8)
             axv.grid(True, alpha=0.2)
 
@@ -188,7 +194,12 @@ class ChartDialog(QDialog):
                 rs = avg_gain / avg_loss.replace(0, np.nan)
                 rsi = 100 - (100 / (1 + rs))
                 rsi = rsi.dropna()
-                axr.plot(dates.iloc[-len(rsi):], rsi, color='purple')
+                
+                # Use same x-axis as price chart for alignment
+                if len(rsi) > 0:
+                    rsi_dates = x_dates[-len(rsi):]
+                    axr.plot(rsi_dates, rsi, color='purple')
+                    
                 axr.axhline(30, color='red', alpha=0.3, linestyle='--')
                 axr.axhline(70, color='green', alpha=0.3, linestyle='--')
                 axr.set_ylim(0, 100)
@@ -197,6 +208,9 @@ class ChartDialog(QDialog):
             except Exception:
                 pass
 
+            # Format the x-axis with dates
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+            ax.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(x_dates)//8)))
             self.fig.autofmt_xdate()
             self.canvas.draw_idle()
         except Exception:
@@ -2185,18 +2199,20 @@ class ScanResultsTable(QTableWidget):
         self.setColumnWidth(3, 90)    # Volume
         self.setColumnWidth(4, 54)    # RSI
         self.setColumnWidth(5, 64)    # Score
-        self.setColumnWidth(6, 90)    # Strategy (narrower)
-        self.setColumnWidth(7, 58)    # Momentum Score
-        self.setColumnWidth(8, 58)    # Value Score
-        self.setColumnWidth(9, 58)    # Growth Score
-        self.setColumnWidth(10, 58)   # Oversold Score
-        self.setColumnWidth(11, 90)   # Pred Price
-        self.setColumnWidth(12, 64)   # Pred %
-        self.setColumnWidth(13, 90)   # Price Target
-        self.setColumnWidth(14, 90)   # Stop Loss
-        self.setColumnWidth(15, 90)   # Signal
-        self.setColumnWidth(16, 90)   # AI Rating
-        self.setColumnWidth(17, 88)   # Actions
+        self.setColumnWidth(6, 90)    # Strategy
+        self.setColumnWidth(7, 58)    # Mom S
+        self.setColumnWidth(8, 58)    # Val S
+        self.setColumnWidth(9, 58)    # Gro S
+        self.setColumnWidth(10, 58)   # Over S
+        self.setColumnWidth(11, 58)   # Brea S
+        self.setColumnWidth(12, 64)   # AI Score
+        self.setColumnWidth(13, 90)   # Pred Price
+        self.setColumnWidth(14, 64)   # Pred %
+        self.setColumnWidth(15, 90)   # Price Target
+        self.setColumnWidth(16, 90)   # Stop Loss
+        self.setColumnWidth(17, 90)   # Signal
+        self.setColumnWidth(18, 90)   # AI Rating
+        self.setColumnWidth(19, 120)  # Actions (wider for buttons)
         # Removed P/E and Market Cap columns in this build
         
         # Set row height for more compact display
@@ -2351,6 +2367,9 @@ class ScanResultsTable(QTableWidget):
                 hl.addWidget(btn_chart)
                 hl.addWidget(btn_watch)
                 hl.addWidget(btn_explain)
+                
+                # Add action widget to Actions column (19)
+                self.setCellWidget(row, 19, action_widget)
 
                 # Predicted price and return
                 pred_price = result.get('pred_price')
@@ -2369,11 +2388,12 @@ class ScanResultsTable(QTableWidget):
                 self.setItem(row, 14, QTableWidgetItem(pr_text))  # Pred % moved to 14
 
                 # כפתור דירוג AI לכל שורה
-                btn_ai = QPushButton("דירוג AI")
+                btn_ai = QPushButton("🤖")
+                btn_ai.setToolTip("Get AI Rating")
                 btn_ai.setStyleSheet("QPushButton { font-size: 10px; padding: 2px 8px; }")
                 btn_ai.setFixedHeight(24)
                 btn_ai.clicked.connect(lambda _, s=result['symbol'], r=row: self.request_ai_rating(s, r))
-                self.setCellWidget(row, 18, btn_ai)  # AI Rating button moved to 18
+                self.setCellWidget(row, 18, btn_ai)  # AI Rating button in column 18
             except Exception:
                 pass
     
@@ -2407,13 +2427,35 @@ class ScanResultsTable(QTableWidget):
             self.symbol_selected.emit(symbol)
 
     def request_ai_rating(self, symbol, row):
-        """שליחת שאילתא ל-API של Perplexity והצגת התוצאה בעמודה המתאימה"""
-        # כאן יש לממש קריאה ל-API של Perplexity
-        # לדוגמה:
-        # rating = perplexity_api.get_rating(symbol)
-        # self.setItem(row, 18, QTableWidgetItem(str(rating)))
-        # כרגע נציג ערך דמה
-        self.setItem(row, 18, QTableWidgetItem("A+"))  # Updated column number
+        """Request AI rating from Perplexity API and display result"""
+        try:
+            from src.services.ai_service import AIService
+            from src.core.ai_trading_config import AiTradingConfigManager
+            
+            # Get config and AI service
+            config_manager = AiTradingConfigManager()
+            config = config_manager.load()
+            ai_service = AIService(config)
+            
+            # Determine profile based on current strategy/settings
+            # Default to swing for scanner - could be made configurable
+            profile = "swing"
+            
+            # Get AI rating (0-10 scale)
+            rating = ai_service.score_symbol_numeric_sync(
+                symbol, 
+                profile=profile,
+                timeout=8.0
+            )
+            
+            # Convert to display format (show as decimal)
+            rating_text = f"{rating:.1f}"
+            self.setItem(row, 18, QTableWidgetItem(rating_text))
+            
+        except Exception as e:
+            # Show error in cell
+            self.setItem(row, 18, QTableWidgetItem("Error"))
+            print(f"AI rating error for {symbol}: {e}")
 
 
 class ScannerWidget(QWidget):
@@ -2640,6 +2682,13 @@ class ScannerWidget(QWidget):
         self.stop_button.setEnabled(False)
         title_layout.addWidget(self.stop_button)
 
+        # AI Filter button for post-scan analysis
+        self.ai_filter_button = QPushButton("🤖 AI Filter")
+        self.ai_filter_button.clicked.connect(self.apply_ai_filter)
+        self.ai_filter_button.setToolTip("Rate all results with AI and filter by score")
+        self.ai_filter_button.setEnabled(False)  # Only enabled after scan
+        title_layout.addWidget(self.ai_filter_button)
+
         layout.addLayout(title_layout)
 
         # Status and progress at the top
@@ -2760,6 +2809,7 @@ class ScannerWidget(QWidget):
             # Update UI
             self.scan_button.setEnabled(False)
             self.stop_button.setEnabled(True)
+            self.ai_filter_button.setEnabled(False)  # Disable during scan
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
             self.status_label.setText("Scanning stocks...")
@@ -2870,6 +2920,9 @@ class ScannerWidget(QWidget):
         self.reset_scan_ui()
         self.status_label.setText(f"Scan completed: {count} matches")
         self.logger.info(f"Scan completed: {count} matches")
+        
+        # Enable AI Filter button if we have results
+        self.ai_filter_button.setEnabled(count > 0)
     
     def on_scan_error(self, error: str):
         """Handle scan error"""
@@ -3339,3 +3392,51 @@ class ScanSettingsDialog(QDialog):
         self.criteria_widget.above_sma200.setChecked(True)
         self.criteria_widget.value_chk.setChecked(True)
         self.criteria_widget.growth_chk.setChecked(True)
+
+    def apply_ai_filter(self):
+        """Apply AI filtering to current scan results"""
+        if not hasattr(self, 'results_table') or self.results_table.rowCount() == 0:
+            QMessageBox.information(self, "AI Filter", "No scan results to filter. Please run a scan first.")
+            return
+        
+        # Get current results from table
+        results = []
+        for row in range(self.results_table.rowCount()):
+            symbol_item = self.results_table.item(row, 0)  # Symbol column
+            if symbol_item:
+                symbol = symbol_item.text()
+                results.append({'symbol': symbol, 'row': row})
+        
+        if not results:
+            return
+            
+        # Show progress dialog
+        progress = QProgressDialog("Rating symbols with AI...", "Cancel", 0, len(results), self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        
+        # Rate each symbol with AI
+        ai_ratings = []
+        for i, result in enumerate(results):
+            if progress.wasCanceled():
+                break
+                
+            progress.setValue(i)
+            progress.setLabelText(f"Rating {result['symbol']}...")
+            
+            # Request AI rating for this symbol
+            try:
+                self.results_table.request_ai_rating(result['symbol'], result['row'])
+                ai_ratings.append(result['symbol'])
+            except Exception as e:
+                self.logger.error(f"Error rating {result['symbol']}: {e}")
+            
+            # Process events to keep UI responsive
+            QApplication.processEvents()
+        
+        progress.close()
+        
+        if ai_ratings:
+            QMessageBox.information(self, "AI Filter", f"AI rating initiated for {len(ai_ratings)} symbols.\nResults will appear in the AI Rating column.")
+        else:
+            QMessageBox.warning(self, "AI Filter", "No symbols were rated. Check your AI service configuration.")
