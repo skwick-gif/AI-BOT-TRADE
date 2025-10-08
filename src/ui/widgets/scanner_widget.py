@@ -441,6 +441,7 @@ class ScannerWorker(QObject):
             want_value = bool(criteria.get('strategy_value') or criteria.get('value_enabled'))
             want_growth = bool(criteria.get('strategy_growth') or criteria.get('growth_enabled'))
             want_oversold = bool(criteria.get('strategy_oversold') or criteria.get('oversold_enabled'))
+            want_breakout = bool(criteria.get('strategy_breakout') or criteria.get('breakout_enabled'))
 
             results = []
             processed = 0
@@ -571,54 +572,95 @@ class ScannerWorker(QObject):
                     if not passed:
                         continue
 
-                    # 🚀 Enhanced Base Score Calculation
+                    # 🚀 Enhanced Base Score Calculation - Stock-Specific Normalization
                     score = 0.0
                     crit_met = 0
                     matched_strategies = []
                     
-                    # Calculate advanced technical indicators for better scoring
-                    relative_volume = 1.0
-                    price_strength = 0.0
-                    liquidity_score = 0.0
+                    # Calculate stock-specific percentiles and normalized scores
+                    normalized_rsi = 0.0
+                    normalized_volume = 0.0
+                    normalized_volatility = 0.0
+                    price_momentum_score = 0.0
                     
                     try:
-                        # Relative Volume Score (0-2)
-                        if len(tail) >= 20:
-                            avg_vol_20d = tail['volume'].tail(20).mean()
-                            relative_volume = min(volume / avg_vol_20d, 5.0) if avg_vol_20d > 0 else 1.0
-                        
-                        # Price Strength vs Multiple Timeframes (0-3)
-                        if close_series is not None and len(close_series) >= 50:
-                            price_vs_sma20 = (price / close_series.tail(20).mean() - 1) * 100
-                            price_vs_sma50 = (price / close_series.tail(50).mean() - 1) * 100
+                        # 📊 Stock-Specific RSI Normalization using helper function
+                        if len(tail) >= 100:  # Need sufficient history
+                            # Calculate RSI for entire history
+                            if ta is not None:
+                                rsi_history = ta.rsi(tail['close'], length=14)
+                            else:
+                                # Pure-Pandas RSI calculation
+                                c = tail['close'].astype(float)
+                                delta = c.diff()
+                                gain = delta.clip(lower=0.0)
+                                loss = -delta.clip(upper=0.0)
+                                roll = 14
+                                avg_gain = gain.ewm(alpha=1/roll, adjust=False, min_periods=roll).mean()
+                                avg_loss = loss.ewm(alpha=1/roll, adjust=False, min_periods=roll).mean()
+                                rs = avg_gain / avg_loss.replace(0, float('nan'))
+                                rsi_history = 100 - (100 / (1 + rs))
                             
-                            # Reward consistent strength across timeframes
-                            if price_vs_sma20 > 2 and price_vs_sma50 > 5:
-                                price_strength = 3.0
-                            elif price_vs_sma20 > 0 and price_vs_sma50 > 0:
-                                price_strength = 2.0
-                            elif price_vs_sma20 > 0 or price_vs_sma50 > 0:
-                                price_strength = 1.0
+                            if rsi_history is not None:
+                                normalized_rsi = self._calculate_percentile_score(rsi_val, rsi_history)
                         
-                        # Liquidity Score based on spread and volume (0-2)  
-                        daily_spread_pct = ((latest['high'] - latest['low']) / price) * 100
-                        if daily_spread_pct < 2.0 and relative_volume > 1.2:
-                            liquidity_score = 2.0
-                        elif daily_spread_pct < 5.0 and relative_volume > 0.8:
-                            liquidity_score = 1.0
+                        # 📈 Stock-Specific Volume Normalization using helper function
+                        if len(tail) >= 60:
+                            volume_history = tail['volume']
+                            # Use higher thresholds for volume (40, 60, 80, 95)
+                            normalized_volume = self._calculate_percentile_score(
+                                volume, volume_history, thresholds=[40, 60, 80, 95]
+                            )
+                        
+                        # 🎢 Stock-Specific Volatility Assessment using helper function
+                        if len(tail) >= 50:
+                            returns = tail['close'].pct_change().dropna().abs()
+                            current_volatility = abs(change_pct)
+                            # Use extreme thresholds for volatility (30, 50, 70, 90)
+                            normalized_volatility = self._calculate_percentile_score(
+                                current_volatility, returns, thresholds=[30, 50, 70, 90]
+                            ) * 0.75  # Scale to 0-3 range
+                        
+                        # 🚀 Stock-Specific Price Momentum (0-4 scale)
+                        if close_series is not None and len(close_series) >= 120:
+                            # Multiple timeframe returns vs stock's own history
+                            returns_1w = (price / close_series.iloc[-5] - 1) * 100 if len(close_series) > 4 else 0
+                            returns_1m = (price / close_series.iloc[-21] - 1) * 100 if len(close_series) > 20 else 0
+                            returns_3m = (price / close_series.iloc[-63] - 1) * 100 if len(close_series) > 62 else 0
                             
-                    except Exception:
-                        pass
+                            # Calculate historical return distributions
+                            weekly_returns = close_series.pct_change(5).dropna() * 100
+                            monthly_returns = close_series.pct_change(21).dropna() * 100
+                            
+                            momentum_signals = 0
+                            if len(weekly_returns) > 10 and returns_1w > weekly_returns.quantile(0.8):
+                                momentum_signals += 1
+                            if len(monthly_returns) > 10 and returns_1m > monthly_returns.quantile(0.75):
+                                momentum_signals += 1
+                            if returns_3m > 0:  # Positive 3M return
+                                momentum_signals += 1
+                            if returns_1m > returns_3m/3:  # Accelerating
+                                momentum_signals += 1
+                                
+                            price_momentum_score = min(momentum_signals, 4)
+                            
+                    except Exception as e:
+                        # Fallback to simple scoring if advanced calculation fails
+                        normalized_rsi = min(rsi_val / 25.0, 4.0)  # Simple RSI scaling
+                        normalized_volume = min(relative_volume, 4.0) if 'relative_volume' in locals() else 1.0
+                        normalized_volatility = min(abs(change_pct) / 2.0, 3.0)  # Simple volatility
+                        price_momentum_score = 1.0 if change_pct > 0 else 0.0
                     
-                    # Base score incorporates multiple factors
+                    # Enhanced base score with stock-specific normalization + candle patterns
                     base_score = (
-                        (rsi_val / 100.0 * 2.0) +  # RSI component (0-2)
-                        (relative_volume * 0.4) +    # Volume component (0-2) 
-                        price_strength +             # Price strength (0-3)
-                        liquidity_score             # Liquidity (0-2)
-                    ) / 9.0 * 10.0  # Normalize to 0-10 scale
+                        normalized_rsi * 0.2 +          # RSI component (0-0.8)
+                        normalized_volume * 0.25 +      # Volume component (0-1.0) 
+                        normalized_volatility * 0.15 +  # Volatility component (0-0.45)
+                        price_momentum_score * 0.2 +    # Momentum component (0-0.8)
+                        max(pattern_score, 0) * 0.2     # Candle pattern component (0-0.8, only positive)
+                    ) / 4.0 * 10.0  # Normalize to 0-10 scale
                     
-                    score = base_score
+                    score = max(base_score, 1.0)  # Minimum score of 1
 
                     # Common technicals used by multiple strategies
                     # Compute once defensively
@@ -661,6 +703,11 @@ class ScannerWorker(QObject):
                                 atr_ok = atr_val_pct is not None and 2.0 <= atr_val_pct <= 5.0
                     except Exception:
                         pass
+                    
+                    # 🕯️ Candle Pattern Detection
+                    candle_patterns = self._detect_candle_patterns(tail.tail(10))  # Last 10 candles
+                    pattern_score = candle_patterns.get('pattern_score', 0.0)
+                    
                     # MACD histogram positive
                     macd_pos = False
                     try:
@@ -1200,8 +1247,124 @@ class ScannerWorker(QObject):
                             score = max(score, score_o)
                         breakdown_o = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules_o]
 
+                    # Strategy: Breakout - 🚀 Advanced Pre-Breakout Detection
+                    if want_breakout:
+                        bw = criteria.get('breakout_weights', {})
+                        
+                        # 🔍 Enhanced Breakout Calculations
+                        consolidation_score = 0
+                        volume_buildup = False
+                        resistance_proximity = False
+                        breakout_setup = False
+                        
+                        try:
+                            # Consolidation detection (low volatility + tight range)
+                            if len(tail) >= 20:
+                                recent_highs = tail['high'].tail(20)
+                                recent_lows = tail['low'].tail(20)
+                                price_range = (recent_highs.max() - recent_lows.min()) / price * 100
+                                
+                                # Bollinger Bands squeeze detection
+                                if close_series is not None and len(close_series) >= 20:
+                                    sma20 = close_series.rolling(20).mean()
+                                    std20 = close_series.rolling(20).std()
+                                    bb_width = (std20.iloc[-1] * 4) / sma20.iloc[-1] * 100  # BB width %
+                                    
+                                    # Score consolidation (tighter = higher score)
+                                    if price_range < 5 and bb_width < 8:  # Very tight
+                                        consolidation_score = 4
+                                    elif price_range < 8 and bb_width < 12:  # Tight
+                                        consolidation_score = 3
+                                    elif price_range < 12 and bb_width < 15:  # Moderate
+                                        consolidation_score = 2
+                                    elif price_range < 18:  # Loose consolidation
+                                        consolidation_score = 1
+                            
+                            # Volume buildup detection (increasing volume during consolidation)
+                            if len(tail) >= 40 and 'volume' in tail.columns:
+                                vol_recent = tail['volume'].tail(10).mean()
+                                vol_earlier = tail['volume'].iloc[-30:-10].mean()
+                                volume_trend = vol_recent / vol_earlier if vol_earlier > 0 else 1
+                                
+                                # Volume building up but not explosive yet
+                                volume_buildup = 1.1 <= volume_trend <= 2.5
+                            
+                            # Resistance level proximity
+                            if high_52w is not None and close_series is not None:
+                                # Multiple resistance levels
+                                recent_highs = tail['high'].tail(60)  # Last 3 months
+                                resistance_levels = []
+                                
+                                # Find significant highs (local maxima)
+                                for i in range(5, len(recent_highs)-5):
+                                    if (recent_highs.iloc[i] >= recent_highs.iloc[i-5:i].max() and 
+                                        recent_highs.iloc[i] >= recent_highs.iloc[i+1:i+6].max()):
+                                        resistance_levels.append(recent_highs.iloc[i])
+                                
+                                # Check proximity to resistance
+                                if resistance_levels:
+                                    nearest_resistance = min(resistance_levels, key=lambda x: abs(x - price))
+                                    resistance_distance = abs(price - nearest_resistance) / price * 100
+                                    resistance_proximity = resistance_distance < 3  # Within 3%
+                            
+                            # Breakout setup (multiple confirmations)
+                            setup_signals = []
+                            
+                            # 1. Price above key moving averages
+                            if close_series is not None and len(close_series) >= 50:
+                                sma20_val = close_series.rolling(20).mean().iloc[-1]
+                                sma50_val = close_series.rolling(50).mean().iloc[-1]
+                                if price > sma20_val and price > sma50_val:
+                                    setup_signals.append(True)
+                            
+                            # 2. Strong candle pattern
+                            if pattern_score > 1.5:  # From earlier calculation
+                                setup_signals.append(True)
+                            
+                            # 3. RSI in healthy range (not overbought)
+                            if 50 <= rsi_val <= 75:
+                                setup_signals.append(True)
+                            
+                            # 4. Volume confirmation
+                            if volume_buildup:
+                                setup_signals.append(True)
+                            
+                            breakout_setup = len(setup_signals) >= 3
+                            
+                        except Exception:
+                            pass
+                        
+                        # Enhanced breakout rules with weighted scoring
+                        rules_b = [
+                            # Core breakout indicators (higher weights)
+                            (consolidation_score >= 3, bw.get('tight_consolidation', 4.0), 'Tight Consolidation', {'score': consolidation_score}),
+                            (volume_buildup, bw.get('volume_buildup', 3.0), 'Volume Building Up', {}),
+                            (resistance_proximity, bw.get('near_resistance', 2.5), 'Near Resistance Level', {}),
+                            (breakout_setup, bw.get('breakout_setup', 3.5), 'Breakout Setup Complete', {}),
+                            
+                            # Technical confirmations
+                            (50 <= rsi_val <= 75, bw.get('rsi_healthy', 1.5), 'RSI in Healthy Range', {'rsi': rsi_val}),
+                            (pattern_score > 1.0, bw.get('bullish_pattern', 2.0), 'Bullish Candle Pattern', {'pattern_score': pattern_score}),
+                            (macd_pos, bw.get('macd_positive', 1.5), 'MACD Histogram > 0', {}),
+                            
+                            # Market context
+                            (change_pct >= -1, bw.get('not_falling', 1.0), 'Price Holding/Rising', {'change_pct': change_pct}),
+                            (relative_volume >= 1.2, bw.get('above_avg_volume', 1.5), 'Above Average Volume', {}),
+                            
+                            # Quality filters
+                            (atr_ok, bw.get('healthy_volatility', 1.0), 'Healthy Volatility (ATR)', {'atr_pct': atr_val_pct if 'atr_val_pct' in locals() else 0}),
+                        ]
+                        
+                        crit_b = sum(1 for ok, _wt, *_ in rules_b if ok)
+                        score_b = float(sum(weight for ok, weight, *_ in rules_b if ok))
+                        min_b = int(criteria.get('breakout_min_criteria') or 4)
+                        if crit_b >= min_b:
+                            matched_strategies.append('Breakout')
+                            score = max(score, score_b)
+                        breakdown_b = [{'name': name, 'ok': bool(ok), 'weight': wt, 'details': det} for (ok, wt, name, det) in rules_b]
+
                     # If strategies are selected, require at least one match; otherwise keep base
-                    require_strategy = (want_momentum or want_value or want_growth or want_oversold)
+                    require_strategy = (want_momentum or want_value or want_growth or want_oversold or want_breakout)
                     if require_strategy and not matched_strategies:
                         continue
 
@@ -1227,6 +1390,10 @@ class ScannerWorker(QObject):
                             strategy_scores['Oversold'] = locals().get('score_o')
                             criteria_counts['Oversold'] = locals().get('crit_o')
                             criteria_mins['Oversold'] = int(criteria.get('oversold_min_criteria') or 3)
+                        if want_breakout:
+                            strategy_scores['Breakout'] = locals().get('score_b')
+                            criteria_counts['Breakout'] = locals().get('crit_b')
+                            criteria_mins['Breakout'] = int(criteria.get('breakout_min_criteria') or 4)
                         # Compose prediction fields if available
                         pred_price = None
                         pred_ret = None
@@ -1331,6 +1498,10 @@ class ScannerWorker(QObject):
             if self.is_scanning:
                 # Apply post-processing filters for final quality control
                 results = self._apply_post_processing_filters(results)
+                
+                # Apply AI analysis if enabled
+                if criteria.get('ai_analysis_enabled', False) and results:
+                    results = self._apply_ai_analysis(results, criteria)
                 
                 self.results_updated.emit(results)
                 self.scan_completed.emit(len(results))
@@ -1458,6 +1629,7 @@ class ScanCriteriaWidget(QFrame):
             self.value_chk.toggled.connect(lambda v: self._on_strategy_toggled('value', v))
             self.growth_chk.toggled.connect(lambda v: self._on_strategy_toggled('growth', v))
             self.oversold_chk.toggled.connect(lambda v: self._on_strategy_toggled('oversold', v))
+            self.breakout_chk.toggled.connect(lambda v: self._on_strategy_toggled('breakout', v))
         except Exception:
             pass
 
@@ -1693,19 +1865,30 @@ class ScanCriteriaWidget(QFrame):
         self.value_chk = QCheckBox("Value")
         self.growth_chk = QCheckBox("Growth")
         self.oversold_chk = QCheckBox("Oversold")
+        self.breakout_chk = QCheckBox("Breakout")
         self.momentum_chk.setChecked(False)
         self.value_chk.setChecked(False)
         self.growth_chk.setChecked(False)
         self.oversold_chk.setChecked(False)
+        self.breakout_chk.setChecked(False)
         def on_all(state):
             v = self.run_all_chk.isChecked()
             self.momentum_chk.setChecked(v)
             self.value_chk.setChecked(v)
             self.growth_chk.setChecked(v)
             self.oversold_chk.setChecked(v)
+            self.breakout_chk.setChecked(v)
         self.run_all_chk.stateChanged.connect(on_all)
-        for w in [self.run_all_chk, self.momentum_chk, self.value_chk, self.growth_chk, self.oversold_chk]:
+        for w in [self.run_all_chk, self.momentum_chk, self.value_chk, self.growth_chk, self.oversold_chk, self.breakout_chk]:
             hl.addWidget(w)
+        
+        # AI Analysis toggle
+        hl.addWidget(QLabel(" | "))  # Separator
+        self.ai_analysis_chk = QCheckBox("🤖 AI Analysis")  
+        self.ai_analysis_chk.setChecked(False)
+        self.ai_analysis_chk.setToolTip("Apply Perplexity AI analysis to top candidates (slower but more accurate)")
+        hl.addWidget(self.ai_analysis_chk)
+        
         hl.addStretch()
 
     def create_value_group(self):
@@ -1857,6 +2040,12 @@ class ScanCriteriaWidget(QFrame):
         crit['strategy_value'] = self.value_chk.isChecked() or self.value_enable.isChecked()
         crit['strategy_growth'] = self.growth_chk.isChecked() or getattr(self, 'growth_enable', QCheckBox()).isChecked()
         crit['strategy_oversold'] = self.oversold_chk.isChecked() or getattr(self, 'oversold_enable', QCheckBox()).isChecked()
+        crit['strategy_breakout'] = self.breakout_chk.isChecked() or getattr(self, 'breakout_enable', QCheckBox()).isChecked()
+
+        # AI Analysis config
+        crit['ai_analysis_enabled'] = self.ai_analysis_chk.isChecked()
+        crit['ai_candidates_count'] = 20  # Default: top 20 candidates for AI analysis
+        crit['ai_min_score_threshold'] = 70  # Default: minimum score 70 for AI consideration
 
         # Momentum config
         crit['momentum_enabled'] = self.momentum_enable.isChecked()
@@ -1927,12 +2116,12 @@ class ScanResultsTable(QTableWidget):
     def setup_ui(self):
         """Setup results table"""
         # Set columns: add per-strategy score columns
-        self.setColumnCount(17)
+        self.setColumnCount(19)
         headers = [
             "Symbol", "Price", "Change %", "Volume", "RSI",
             "Score", "Strategy",
-            "Mom S", "Val S", "Gro S", "Over S",
-            "Pred Price", "Pred %",
+            "Mom S", "Val S", "Gro S", "Over S", "Brea S",
+            "AI Score", "Pred Price", "Pred %",
             "Price Target", "Stop Loss", "Signal", "AI Rating", "Actions"
         ]
         self.setHorizontalHeaderLabels(headers)
@@ -2046,12 +2235,30 @@ class ScanResultsTable(QTableWidget):
             self.setItem(row, 8, QTableWidgetItem(fmt(ss.get('Value'))))
             self.setItem(row, 9, QTableWidgetItem(fmt(ss.get('Growth'))))
             self.setItem(row, 10, QTableWidgetItem(fmt(ss.get('Oversold'))))
+            self.setItem(row, 11, QTableWidgetItem(fmt(ss.get('Breakout'))))
+            
+            # AI Score column (12)
+            ai_score = result.get('ai_score', '')
+            if ai_score:
+                ai_item = QTableWidgetItem(f"{ai_score}")
+                # Color coding for AI score
+                if ai_score >= 85:
+                    ai_item.setBackground(QColor(0, 255, 0, 80))  # Light green
+                elif ai_score >= 70:
+                    ai_item.setBackground(QColor(255, 165, 0, 80))  # Light orange
+                elif ai_score >= 50:
+                    ai_item.setBackground(QColor(255, 255, 0, 80))  # Light yellow
+                else:
+                    ai_item.setBackground(QColor(255, 0, 0, 80))  # Light red
+                self.setItem(row, 12, ai_item)
+            else:
+                self.setItem(row, 12, QTableWidgetItem("-"))
 
             # Tooltip breakdown of criteria counts
             cc = result.get('criteria_counts', {}) if isinstance(result, dict) else {}
             mins = result.get('criteria_mins', {}) if isinstance(result, dict) else {}
             tip_parts = []
-            for name in ['Momentum','Value','Growth','Oversold']:
+            for name in ['Momentum','Value','Growth','Oversold','Breakout']:
                 sc = ss.get(name)
                 cnt = cc.get(name)
                 mn = mins.get(name)
@@ -2114,15 +2321,15 @@ class ScanResultsTable(QTableWidget):
                         pr_text = f"{val:+.1f}%"
                 except Exception:
                     pr_text = ""
-                self.setItem(row, 11, QTableWidgetItem(pp_text))
-                self.setItem(row, 12, QTableWidgetItem(pr_text))
+                self.setItem(row, 13, QTableWidgetItem(pp_text))  # Pred Price moved to 13
+                self.setItem(row, 14, QTableWidgetItem(pr_text))  # Pred % moved to 14
 
                 # כפתור דירוג AI לכל שורה
                 btn_ai = QPushButton("דירוג AI")
                 btn_ai.setStyleSheet("QPushButton { font-size: 10px; padding: 2px 8px; }")
                 btn_ai.setFixedHeight(24)
                 btn_ai.clicked.connect(lambda _, s=result['symbol'], r=row: self.request_ai_rating(s, r))
-                self.setCellWidget(row, 16, btn_ai)
+                self.setCellWidget(row, 18, btn_ai)  # AI Rating button moved to 18
             except Exception:
                 pass
     
@@ -2160,15 +2367,138 @@ class ScanResultsTable(QTableWidget):
         # כאן יש לממש קריאה ל-API של Perplexity
         # לדוגמה:
         # rating = perplexity_api.get_rating(symbol)
-        # self.setItem(row, 16, QTableWidgetItem(str(rating)))
+        # self.setItem(row, 18, QTableWidgetItem(str(rating)))
         # כרגע נציג ערך דמה
-        self.setItem(row, 16, QTableWidgetItem("A+"))
+        self.setItem(row, 18, QTableWidgetItem("A+"))  # Updated column number
 
 
 class ScannerWidget(QWidget):
     # Queue scan actions to the worker thread to avoid UI freezes
     request_scan = pyqtSignal(dict)
     request_stop = pyqtSignal()
+    
+    @staticmethod
+    def _calculate_percentile_score(current_value, historical_series, thresholds=None):
+        """
+        Calculate percentile-based score for stock-specific normalization
+        
+        Args:
+            current_value: Current value to evaluate
+            historical_series: Historical data series for comparison
+            thresholds: Custom percentile thresholds [low, med, high, extreme]
+        
+        Returns:
+            Score from 0-4 based on historical percentile
+        """
+        if thresholds is None:
+            thresholds = [20, 40, 60, 80]  # Default percentile thresholds
+            
+        try:
+            clean_series = historical_series.dropna()
+            if len(clean_series) < 10:  # Need minimum history
+                return 1.0
+                
+            percentile = (clean_series <= current_value).sum() / len(clean_series) * 100
+            
+            if percentile >= thresholds[3]:    # >= 80th percentile
+                return 4.0
+            elif percentile >= thresholds[2]:  # >= 60th percentile  
+                return 3.0
+            elif percentile >= thresholds[1]:  # >= 40th percentile
+                return 2.0
+            elif percentile >= thresholds[0]:  # >= 20th percentile
+                return 1.0
+            else:                              # < 20th percentile
+                return 0.0
+                
+        except Exception:
+            return 1.0  # Fallback score
+    
+    @staticmethod
+    def _detect_candle_patterns(df_tail, min_periods=5):
+        """
+        Detect basic candle patterns in recent data
+        
+        Args:
+            df_tail: DataFrame with OHLC data (last N periods)
+            min_periods: Minimum periods needed for pattern detection
+            
+        Returns:
+            dict: Pattern scores and detected patterns
+        """
+        patterns = {
+            'doji': 0.0,
+            'hammer': 0.0,
+            'shooting_star': 0.0,
+            'engulfing_bullish': 0.0,
+            'engulfing_bearish': 0.0,
+            'pattern_score': 0.0
+        }
+        
+        try:
+            if len(df_tail) < min_periods or not all(col in df_tail.columns for col in ['open', 'high', 'low', 'close']):
+                return patterns
+                
+            # Get last few candles
+            last = df_tail.iloc[-1]
+            prev = df_tail.iloc[-2] if len(df_tail) > 1 else None
+            
+            if prev is None:
+                return patterns
+                
+            # Calculate candle properties
+            body = abs(last['close'] - last['open'])
+            total_range = last['high'] - last['low']
+            upper_shadow = last['high'] - max(last['close'], last['open'])
+            lower_shadow = min(last['close'], last['open']) - last['low']
+            
+            prev_body = abs(prev['close'] - prev['open'])
+            
+            # Avoid division by zero
+            if total_range == 0:
+                return patterns
+                
+            # Doji detection (small body relative to range)
+            if body / total_range < 0.1:
+                patterns['doji'] = 2.0
+                patterns['pattern_score'] += 1.0
+            
+            # Hammer detection (small body, long lower shadow, small upper shadow)
+            if (body / total_range < 0.3 and 
+                lower_shadow > body * 2 and 
+                upper_shadow < body * 0.5):
+                patterns['hammer'] = 2.5
+                patterns['pattern_score'] += 1.5
+            
+            # Shooting star (small body, long upper shadow, small lower shadow)
+            if (body / total_range < 0.3 and 
+                upper_shadow > body * 2 and 
+                lower_shadow < body * 0.5):
+                patterns['shooting_star'] = -2.0  # Bearish
+                patterns['pattern_score'] -= 1.0
+            
+            # Bullish engulfing (current green candle engulfs previous red candle)
+            if (last['close'] > last['open'] and  # Current is green
+                prev['close'] < prev['open'] and  # Previous is red
+                last['close'] > prev['open'] and  # Current close > prev open
+                last['open'] < prev['close'] and  # Current open < prev close
+                body > prev_body * 1.1):          # Current body > prev body
+                patterns['engulfing_bullish'] = 3.0
+                patterns['pattern_score'] += 2.0
+            
+            # Bearish engulfing (current red candle engulfs previous green candle)
+            if (last['close'] < last['open'] and  # Current is red
+                prev['close'] > prev['open'] and  # Previous is green
+                last['close'] < prev['open'] and  # Current close < prev open
+                last['open'] > prev['close'] and  # Current open > prev close
+                body > prev_body * 1.1):          # Current body > prev body
+                patterns['engulfing_bearish'] = -2.5  # Bearish
+                patterns['pattern_score'] -= 1.5
+                
+        except Exception:
+            pass
+            
+        return patterns
     def on_ml_toggle(self, state):
         self.use_ml_preds = bool(state)
         self.ml_run_combo.setEnabled(self.use_ml_preds)
@@ -2537,3 +2867,144 @@ class ScannerWidget(QWidget):
         except Exception as e:
             self.logger.warning(f"Post-processing filter error: {e}")
             return results  # Return original results if filtering fails
+
+    def _apply_ai_analysis(self, results, criteria):
+        """Apply Perplexity AI analysis to top candidates"""
+        if not results:
+            return results
+        
+        try:
+            # Get AI analysis parameters
+            candidates_count = criteria.get('ai_candidates_count', 20)
+            min_threshold = criteria.get('ai_min_score_threshold', 70)
+            
+            # Filter candidates for AI analysis
+            eligible_results = [r for r in results if r.get('score', 0) >= min_threshold]
+            if len(eligible_results) > candidates_count:
+                eligible_results = eligible_results[:candidates_count]
+            
+            if not eligible_results:
+                self.logger.info("No candidates meet AI analysis threshold")
+                return results
+            
+            # Update status
+            self.status_updated.emit(f"🤖 Starting AI analysis for {len(eligible_results)} candidates...")
+            
+            # Import AI service
+            try:
+                from services.ai_service import AIService
+                from core.config_manager import ConfigManager
+                config = ConfigManager()  
+                ai_service = AIService(config)
+            except ImportError as e:
+                self.logger.warning(f"AI Service not available: {e}")
+                return results
+            
+            # Process each candidate
+            for i, result in enumerate(eligible_results):
+                if not self.is_scanning:  # Check if user stopped
+                    break
+                    
+                symbol = result.get('symbol', '')
+                self.status_updated.emit(f"🤖 AI analyzing {symbol} ({i+1}/{len(eligible_results)})...")
+                
+                try:
+                    # Prepare AI prompt
+                    prompt = self._create_ai_prompt(result)
+                    
+                    # Get AI analysis (simplified - just score)
+                    ai_response = ai_service.analyze_stock_simple(prompt, symbol)
+                    ai_score = self._extract_ai_score(ai_response)
+                    
+                    # Add AI score to result
+                    if ai_score is not None:
+                        result['ai_score'] = ai_score
+                        self.logger.info(f"AI analysis for {symbol}: {ai_score}")
+                    else:
+                        result['ai_score'] = None
+                        
+                except Exception as e:
+                    self.logger.warning(f"AI analysis failed for {symbol}: {e}")
+                    result['ai_score'] = None
+                    
+                # Small delay to avoid rate limits
+                import time
+                if i < len(eligible_results) - 1:  # Don't sleep after last item
+                    time.sleep(2)  # 2 second delay between requests
+            
+            # Sort results by AI score (if available) then by regular score
+            def sort_key(r):
+                ai_score = r.get('ai_score')
+                regular_score = r.get('score', 0)
+                if ai_score is not None:
+                    return (1, ai_score, regular_score)  # AI analyzed items first
+                else:
+                    return (0, regular_score, 0)  # Non-AI items second
+            
+            results.sort(key=sort_key, reverse=True)
+            
+            ai_analyzed_count = sum(1 for r in results if r.get('ai_score') is not None)
+            self.status_updated.emit(f"🤖 AI analysis complete: {ai_analyzed_count} stocks analyzed")
+            
+            return results
+            
+        except Exception as e:
+            self.logger.warning(f"AI analysis error: {e}")
+            return results  # Return original results if AI analysis fails
+
+    def _create_ai_prompt(self, result):
+        """Create AI prompt for stock analysis"""
+        symbol = result.get('symbol', '')
+        score = result.get('score', 0)
+        strategy = result.get('matched_strategies', [])
+        price = result.get('price', 0)
+        change_pct = result.get('change_pct', 0)
+        volume = result.get('volume', 0)
+        rsi = result.get('rsi', 50)
+        
+        strategy_text = ', '.join(strategy) if strategy else 'Technical'
+        
+        prompt = f"""Analyze stock {symbol} for trading potential. Provide ONLY a numerical score 0-100.
+
+Technical Summary:
+- Current Price: ${price:.2f}
+- Daily Change: {change_pct:+.1f}%
+- Volume: {volume:,}
+- RSI: {rsi:.1f}
+- Scanner Score: {score:.1f}
+- Matched Strategy: {strategy_text}
+
+Consider:
+1. Technical momentum and patterns
+2. Current market conditions
+3. Sector performance  
+4. Recent news/catalysts
+5. Risk/reward potential
+
+Respond with ONLY a number 0-100 representing investment attractiveness."""
+        
+        return prompt
+
+    def _extract_ai_score(self, ai_response):
+        """Extract numerical score from AI response"""
+        if not ai_response:
+            return None
+            
+        try:
+            # Try to extract a number from the response
+            import re
+            
+            # Look for patterns like "85", "Score: 75", "Rating: 90", etc.
+            numbers = re.findall(r'\b([0-9]{1,3})\b', str(ai_response))
+            
+            if numbers:
+                for num_str in numbers:
+                    num = int(num_str)
+                    if 0 <= num <= 100:  # Valid score range
+                        return num
+                        
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"Error extracting AI score: {e}")
+            return None

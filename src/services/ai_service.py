@@ -487,3 +487,87 @@ Always remind users about risk management and due diligence."""
         if val > 10:
             val = 10.0
         return val
+
+    def analyze_stock_simple(self, prompt: str, symbol: str, timeout: int = 60) -> Optional[str]:
+        """
+        Simple stock analysis using Perplexity API - returns raw response
+        
+        Args:
+            prompt: Analysis prompt
+            symbol: Stock symbol
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Raw AI response string or None if failed
+        """
+        try:
+            self.logger.info(f"Starting AI analysis for {symbol}")
+            
+            # Get API key
+            api_key = self.config.get("perplexity_api_key")
+            if not api_key:
+                self.logger.error("Perplexity API key not configured")
+                return None
+            
+            # Prepare request
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "llama-3.1-sonar-small-128k-online",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "You are a professional stock analyst. Provide concise, numerical assessments."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 100,
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "search_domain_filter": ["finance.yahoo.com", "marketwatch.com", "bloomberg.com", "reuters.com"],
+                "return_citations": False,
+                "search_recency_filter": "week",
+                "top_k": 0,
+                "stream": False,
+                "presence_penalty": 0,
+                "frequency_penalty": 1
+            }
+            
+            # Make request with timeout
+            session = self.get_http_session()
+            response = session.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout
+            )
+            
+            if response.status_code != 200:
+                self.logger.error(f"Perplexity API error {response.status_code}: {response.text}")
+                return None
+            
+            # Parse response
+            data = response.json()
+            if 'choices' in data and len(data['choices']) > 0:
+                content = data['choices'][0].get('message', {}).get('content', '')
+                self.logger.info(f"AI analysis for {symbol} complete: {content[:50]}...")
+                return content.strip()
+            else:
+                self.logger.error(f"Unexpected API response format: {data}")
+                return None
+                
+        except requests.exceptions.Timeout:
+            self.logger.error(f"AI analysis timeout for {symbol}")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"AI analysis request error for {symbol}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"AI analysis error for {symbol}: {e}")
+            return None
