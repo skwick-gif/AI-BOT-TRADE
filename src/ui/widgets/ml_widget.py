@@ -970,23 +970,37 @@ class DataManagementWidget(QFrame):
             def __init__(self, cmd):
                 super().__init__()
                 self.cmd = cmd
+                self.proc = None
+
+            def stop(self):
+                try:
+                    if self.proc and self.proc.poll() is None:
+                        # Try graceful termination first
+                        self.proc.terminate()
+                        try:
+                            self.proc.wait(timeout=3)
+                        except Exception:
+                            self.proc.kill()
+                except Exception as e:
+                    # Emit a non-fatal failure message to log
+                    self.failed.emit(f"Stop failed: {e}")
 
             def run(self):
                 try:
                     # Start subprocess and stream output
-                    proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, text=True, bufsize=1)
-                    for ln in proc.stdout:
+                    self.proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, text=True, bufsize=1)
+                    for ln in self.proc.stdout:
                         ln = ln.rstrip('\n')
                         if ln:  # Only emit non-empty lines
                             self.line.emit(ln)
-                    proc.wait()
+                    self.proc.wait()
                     self.finished.emit()
                 except Exception as e:
                     self.failed.emit(str(e))
 
         # Build command to run the adapter
         python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
-        adapter = Path(__file__).parent.parent.parent.parent / 'tools' / 'run_stocks_small.py'
+        adapter = Path(__file__).parent.parent.parent.parent / 'tools' / 'download_stocks.py'
         if adapter.exists():
             cmd = [python_exec, str(adapter), '--limit', str(limit or 5)]
             self._append_log(f"Starting adapter: {cmd}")
@@ -998,6 +1012,9 @@ class DataManagementWidget(QFrame):
             runner.line.connect(self._append_log)
             runner.failed.connect(lambda msg: self._append_log(f"Adapter error: {msg}"))
             runner.finished.connect(lambda: (self._append_log("Adapter finished."), thread.quit(), self._on_adapter_finished()))
+            thread.finished.connect(lambda: setattr(self, "_adapter_thread", None))
+            self._adapter_runner = runner
+            self._adapter_thread = thread
             thread.start()
         else:
             # fallback to built-in service run_now
@@ -1007,7 +1024,18 @@ class DataManagementWidget(QFrame):
 
     def _on_stop(self):
         """Stop the running update"""
+        # Stop built-in service if running
         self._service.stop()
+        # Stop external adapter process/thread if present
+        try:
+            if getattr(self, "_adapter_runner", None):
+                self._adapter_runner.stop()
+            if getattr(self, "_adapter_thread", None):
+                self._adapter_thread.quit()
+                self._adapter_thread.wait(3000)
+                self._adapter_thread = None
+        except Exception:
+            pass
         self.stop_btn.setEnabled(False)
         self.run_now_btn.setEnabled(True)
         self._append_log("Stop requested")
@@ -1067,11 +1095,26 @@ class DataManagementWidget(QFrame):
         """Handle adapter completion"""
         self.run_now_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        # Clean up runner reference
+        self._adapter_runner = None
 
     def _append_log(self, line: str):
         """Append a line to the log view"""
         ts = datetime.now().strftime('%H:%M:%S')
         self.log_view.append(f"[{ts}] {line}")
+
+    def closeEvent(self, event):
+        """Ensure background thread is closed cleanly to avoid QThread warning"""
+        try:
+            if getattr(self, "_adapter_runner", None):
+                self._adapter_runner.stop()
+            if getattr(self, "_adapter_thread", None):
+                self._adapter_thread.quit()
+                self._adapter_thread.wait(3000)
+                self._adapter_thread = None
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     # --- Persistence helpers ---
     def _load_saved_time(self):

@@ -136,7 +136,7 @@ class DataUpdateDialog(QDialog):
 
 		# Build command to run the adapter
 		python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
-		adapter = Path(__file__).parent.parent.parent / 'tools' / 'run_stocks_small.py'
+		adapter = Path(__file__).parent.parent.parent / 'tools' / 'download_stocks.py'
 		if adapter.exists():
 			cmd = [python_exec, str(adapter), '--limit', str(limit or 5)]
 			self._append_log(f"Starting adapter: {cmd}")

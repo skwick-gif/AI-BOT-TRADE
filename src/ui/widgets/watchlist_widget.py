@@ -105,37 +105,19 @@ class WatchlistTable(QTableWidget):
     def setup_ui(self):
         """Setup watchlist table"""
         # Set columns
-        self.setColumnCount(9)
-        headers = ["Symbol", "Price", "Change", "Change %", "Volume", "Bid", "Ask", "High", "Low"]
+        self.setColumnCount(12)
+        headers = [
+            "Symbol", "Added At", "Price", "Volume",
+            "Day 1", "Change 1", "Day 2", "Change 2", "AI Rating", "Price Target", "Stop Loss", "Signal", "Sharpe Ratio"
+        ]
         self.setHorizontalHeaderLabels(headers)
-        
-        # Configure table
-        self.setAlternatingRowColors(True)
-        self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        
-        # Configure headers
+        # התאמת רוחב עמודות למסך קטן
         header = self.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # Symbol
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   # Price
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)   # Change
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)   # Change %
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)   # Volume
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # Bid
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)   # Ask
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)   # High
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch) # Low
-        
-        # Set column widths
-        self.setColumnWidth(0, 80)   # Symbol
-        self.setColumnWidth(1, 100)  # Price
-        self.setColumnWidth(2, 80)   # Change
-        self.setColumnWidth(3, 80)   # Change %
-        self.setColumnWidth(4, 100)  # Volume
-        self.setColumnWidth(5, 80)   # Bid
-        self.setColumnWidth(6, 80)   # Ask
-        self.setColumnWidth(7, 80)   # High
-        self.setColumnWidth(8, 80)   # Low
+        col_widths = [70, 90, 70, 70, 70, 60, 70, 70, 70, 70, 70, 70]
+        for i, w in enumerate(col_widths):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Fixed)
+            self.setColumnWidth(i, w)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Symbol
         
         # Enable sorting
         self.setSortingEnabled(True)
@@ -160,13 +142,20 @@ class WatchlistTable(QTableWidget):
         symbol_item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         self.setItem(row, 0, symbol_item)
         
+        # Added At column
+        from datetime import datetime
+        added_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        added_item = QTableWidgetItem(added_at)
+        added_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setItem(row, 1, added_item)
+        
         # Initialize other columns with placeholder data
-        for col in range(1, 9):
+        for col in range(2, 12):
             item = QTableWidgetItem("-")
             item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             self.setItem(row, col, item)
         
-        self.symbol_data[symbol] = {'row': row}
+        self.symbol_data[symbol] = {'row': row, 'added_at': added_at, 'prices': []}
         return True
     
     def remove_symbol(self, symbol: str):
@@ -193,47 +182,112 @@ class WatchlistTable(QTableWidget):
         row = self.symbol_data[symbol]['row']
         
         # Price
-        price_item = self.item(row, 1)
-        price_item.setText(f"${data['price']:.2f}")
-        
-        # Change
-        change_item = self.item(row, 2)
-        change_item.setText(f"${data['change']:+.2f}")
-        if data['change'] >= 0:
-            change_item.setForeground(QColor("#4CAF50"))
-        else:
-            change_item.setForeground(QColor("#f44336"))
-        
-        # Change %
-        change_pct_item = self.item(row, 3)
-        change_pct_item.setText(f"{data['change_pct']:+.2f}%")
-        if data['change_pct'] >= 0:
-            change_pct_item.setForeground(QColor("#4CAF50"))
-        else:
-            change_pct_item.setForeground(QColor("#f44336"))
+        price_item = self.item(row, 2)
+        price_item.setText(f"{data['price']:.2f}")
         
         # Volume
-        volume_item = self.item(row, 4)
+        volume_item = self.item(row, 3)
         volume_item.setText(f"{data['volume']:,}")
         
-        # Bid
-        bid_item = self.item(row, 5)
-        bid_item.setText(f"${data['bid']:.2f}")
+        # מחיר יום 1-7
+        prices = self.symbol_data[symbol].get('prices', [])
+        prices.append(data['price'])
+        self.symbol_data[symbol]['prices'] = prices[-7:]  # שמור עד 7 ימים
+        for i in range(7):
+            price_col = 4 + i * 2
+            change_col = 5 + i * 2
+            if i < len(prices):
+                price_val = prices[i]
+                price_item = self.item(row, price_col)
+                price_item.setText(f"{price_val:.2f}")
+                # שינוי יומי
+                if i == 0:
+                    change_val = 0.0
+                else:
+                    change_val = prices[i] - prices[i-1]
+                change_item = self.item(row, change_col)
+                change_item.setText(f"{change_val:+.2f}")
+                if change_val > 0:
+                    change_item.setForeground(QColor("#4CAF50"))
+                elif change_val < 0:
+                    change_item.setForeground(QColor("#f44336"))
+                else:
+                    change_item.setForeground(QColor("#000000"))
+            else:
+                self.item(row, price_col).setText("-")
+                self.item(row, change_col).setText("-")
         
-        # Ask
-        ask_item = self.item(row, 6)
-        ask_item.setText(f"${data['ask']:.2f}")
+        # עמודות חדשות: AI Rating, Price Target, Stop Loss, Signal
+        ai_rating = data.get('ai_rating', '-')
+        self.setItem(row, 8, QTableWidgetItem(str(ai_rating)))
+        price_target = data.get('price_target', '-')
+        self.setItem(row, 9, QTableWidgetItem(str(price_target)))
+        stop_loss = data.get('stop_loss', '-')
+        self.setItem(row, 10, QTableWidgetItem(str(stop_loss)))
+        signal = data.get('signal', '-')
+        self.setItem(row, 11, QTableWidgetItem(str(signal)))
         
-        # High
-        high_item = self.item(row, 7)
-        high_item.setText(f"${data['high']:.2f}")
-        
-        # Low
-        low_item = self.item(row, 8)
-        low_item.setText(f"${data['low']:.2f}")
+        # עמודות יחס סיכון-סיכוי
+        sharpe = self.calc_sharpe(self.symbol_data[symbol]['prices'])
+        sortino = self.calc_sortino(self.symbol_data[symbol]['prices'])
+        calmar = self.calc_calmar(self.symbol_data[symbol]['prices'])
+        self.setItem(row, 11, QTableWidgetItem(str(sharpe)))
+        self.setItem(row, 12, QTableWidgetItem(str(sortino)))
+        self.setItem(row, 13, QTableWidgetItem(str(calmar)))
         
         # Store data
         self.symbol_data[symbol]['data'] = data
+    
+    def calc_sharpe(self, prices):
+        if len(prices) < 2:
+            return '-'
+        import numpy as np
+        returns = np.diff(prices) / prices[:-1]
+        mean_ret = np.mean(returns)
+        std_ret = np.std(returns)
+        rf = 0.0  # risk-free rate
+        if std_ret == 0:
+            return '-'
+        return round((mean_ret - rf) / std_ret, 2)
+
+    def calc_sortino(self, prices):
+        if len(prices) < 2:
+            return '-'
+        import numpy as np
+        returns = np.diff(prices) / prices[:-1]
+        mean_ret = np.mean(returns)
+        rf = 0.0
+        downside = returns[returns < 0]
+        if len(downside) == 0:
+            return '-'
+        std_down = np.std(downside)
+        if std_down == 0:
+            return '-'
+        return round((mean_ret - rf) / std_down, 2)
+
+    def calc_calmar(self, prices):
+        if len(prices) < 2:
+            return '-'
+        import numpy as np
+        returns = np.diff(prices) / prices[:-1]
+        mean_ret = np.mean(returns)
+        max_drawdown = self.max_drawdown(prices)
+        if max_drawdown == 0:
+            return '-'
+        return round(mean_ret / max_drawdown, 2)
+
+    def max_drawdown(self, prices):
+        import numpy as np
+        arr = np.array(prices)
+        max_dd = 0
+        peak = arr[0]
+        for p in arr:
+            if p > peak:
+                peak = p
+            dd = (peak - p) / peak
+            if dd > max_dd:
+                max_dd = dd
+        return max_dd
     
     def show_context_menu(self, position):
         """Show context menu"""
@@ -275,6 +329,50 @@ class WatchlistTable(QTableWidget):
     def get_symbols(self) -> list:
         """Get all symbols in the watchlist"""
         return list(self.symbol_data.keys())
+    
+    def request_ai_rating(self, symbol, row):
+        """שליחת שאילתא ל-API של Perplexity והצגת התוצאה בעמודה המתאימה"""
+        import requests
+        import json
+        # שליפת נתונים רלוונטיים מהשורה
+        price = self.item(row, 2).text()
+        prices = [self.item(row, 4 + i * 2).text() for i in range(7)]
+        signal = self.item(row, 11).text() if self.item(row, 11) else '-'
+        price_target = self.item(row, 9).text() if self.item(row, 9) else '-'
+        stop_loss = self.item(row, 10).text() if self.item(row, 10) else '-'
+        sharpe = self.item(row, 12).text() if self.item(row, 12) else '-'
+        sortino = self.item(row, 13).text() if self.item(row, 13) else '-'
+        calmar = self.item(row, 14).text() if self.item(row, 14) else '-'
+        # בניית שאילתא
+        prompt = (
+            f"אנא נתח את מניית {symbol}. "
+            f"מחיר נוכחי: {price}. "
+            f"מחירי 7 ימים אחרונים: {prices}. "
+            f"סיגנל: {signal}. "
+            f"יעד מחיר: {price_target}. Stop Loss: {stop_loss}. "
+            f"Sharpe Ratio: {sharpe}, Sortino: {sortino}, Calmar: {calmar}. "
+            "החזר תשובה בפורמט JSON עם השדות: rating, price_target, explanation."
+        )
+        try:
+            response = requests.post(
+                "https://api.perplexity.ai/v1/ask",
+                headers={"Authorization": "Bearer <YOUR_API_KEY>"},
+                json={"prompt": prompt}
+            )
+            result = response.json()
+            ai_output = json.loads(result['output'])
+            rating = ai_output.get('rating', '-')
+            price_target = ai_output.get('price_target', '-')
+            explanation = ai_output.get('explanation', '')
+        except Exception:
+            rating = '-'
+            price_target = '-'
+            explanation = ''
+        # עדכון הטבלה
+        self.setItem(row, 8, QTableWidgetItem(str(rating)))
+        self.setItem(row, 9, QTableWidgetItem(str(price_target)))
+        self.item(row, 8).setToolTip(explanation)
+        self.item(row, 9).setToolTip(explanation)
 
 
 class WatchlistDetails(QFrame):

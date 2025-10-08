@@ -912,6 +912,32 @@ class ScannerWorker(QObject):
                                 'Oversold': locals().get('breakdown_o'),
                             }
                         }
+                        # חישוב Price Target, Stop Loss, Signal
+                        # Price Target: תחזית מחיר (pred_price) אם קיימת, אחרת ריק
+                        price_target = result.get('pred_price')
+                        if price_target is None:
+                            price_target = ''
+                        result['price_target'] = price_target
+                        # Stop Loss: מחיר נוכחי פחות 5%
+                        stop_loss = price * 0.95
+                        result['stop_loss'] = round(stop_loss, 2)
+                        # Signal: BUY אם תחזית חיובית, SELL אם שלילית, HOLD אם קרוב לאפס
+                        pred_ret = result.get('pred_return')
+                        if pred_ret is not None:
+                            try:
+                                pr = float(pred_ret)
+                                if abs(pr) > 1.5:
+                                    pr = pr / 100.0
+                                if pr > 0.02:
+                                    result['signal'] = 'BUY'
+                                elif pr < -0.02:
+                                    result['signal'] = 'SELL'
+                                else:
+                                    result['signal'] = 'HOLD'
+                            except Exception:
+                                result['signal'] = '-'
+                        else:
+                            result['signal'] = '-'
                         results.append(result)
                         # Stream result immediately
                         try:
@@ -1539,13 +1565,13 @@ class ScanResultsTable(QTableWidget):
     def setup_ui(self):
         """Setup results table"""
         # Set columns: add per-strategy score columns
-        self.setColumnCount(14)
+        self.setColumnCount(17)
         headers = [
             "Symbol", "Price", "Change %", "Volume", "RSI",
             "Score", "Strategy",
             "Mom S", "Val S", "Gro S", "Over S",
             "Pred Price", "Pred %",
-            "Actions"
+            "Price Target", "Stop Loss", "Signal", "AI Rating", "Actions"
         ]
         self.setHorizontalHeaderLabels(headers)
         
@@ -1574,7 +1600,11 @@ class ScanResultsTable(QTableWidget):
         self.setColumnWidth(10, 58)   # Oversold Score
         self.setColumnWidth(11, 90)   # Pred Price
         self.setColumnWidth(12, 64)   # Pred %
-        self.setColumnWidth(13, 88)   # Actions
+        self.setColumnWidth(13, 90)   # Price Target
+        self.setColumnWidth(14, 90)   # Stop Loss
+        self.setColumnWidth(15, 90)   # Signal
+        self.setColumnWidth(16, 90)   # AI Rating
+        self.setColumnWidth(17, 88)   # Actions
         # Removed P/E and Market Cap columns in this build
         
         # Enable sorting
@@ -1725,7 +1755,12 @@ class ScanResultsTable(QTableWidget):
                 self.setItem(row, 11, QTableWidgetItem(pp_text))
                 self.setItem(row, 12, QTableWidgetItem(pr_text))
 
-                self.setCellWidget(row, 13, action_widget)
+                # כפתור דירוג AI לכל שורה
+                btn_ai = QPushButton("דירוג AI")
+                btn_ai.setStyleSheet("QPushButton { font-size: 10px; padding: 2px 8px; }")
+                btn_ai.setFixedHeight(24)
+                btn_ai.clicked.connect(lambda _, s=result['symbol'], r=row: self.request_ai_rating(s, r))
+                self.setCellWidget(row, 16, btn_ai)
             except Exception:
                 pass
     
@@ -1757,6 +1792,15 @@ class ScanResultsTable(QTableWidget):
         if symbol_item:
             symbol = symbol_item.text()
             self.symbol_selected.emit(symbol)
+
+    def request_ai_rating(self, symbol, row):
+        """שליחת שאילתא ל-API של Perplexity והצגת התוצאה בעמודה המתאימה"""
+        # כאן יש לממש קריאה ל-API של Perplexity
+        # לדוגמה:
+        # rating = perplexity_api.get_rating(symbol)
+        # self.setItem(row, 16, QTableWidgetItem(str(rating)))
+        # כרגע נציג ערך דמה
+        self.setItem(row, 16, QTableWidgetItem("A+"))
 
 
 class ScannerWidget(QWidget):
