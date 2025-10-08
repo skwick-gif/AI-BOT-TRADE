@@ -2629,27 +2629,8 @@ class ScannerWidget(QWidget):
         self.settings_button.setToolTip("Configure scan criteria and presets")
         title_layout.addWidget(self.settings_button)
 
-        # Quick scan button
-        self.quick_scan_button = QPushButton("⚡ Quick Scan")
-        self.quick_scan_button.clicked.connect(self.quick_scan)
-        self.quick_scan_button.setToolTip("Run scan with default settings")
-        self.quick_scan_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3498DB;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2980B9;
-            }
-        """)
-        title_layout.addWidget(self.quick_scan_button)
-
-        # Scan button
-        self.scan_button = QPushButton("🔍 Custom Scan")
+        # Single scan button
+        self.scan_button = QPushButton("🔍 Start Scan")
         self.scan_button.clicked.connect(self.start_scan)
         self.scan_button.setToolTip("Run scan with current settings")
         title_layout.addWidget(self.scan_button)
@@ -2827,28 +2808,6 @@ class ScannerWidget(QWidget):
         result = dialog.exec()
         # Update criteria status after dialog closes
         self.update_criteria_status()
-    
-    def quick_scan(self):
-        """Run a quick scan with sensible defaults"""
-        try:
-            # Apply default criteria for quick scan
-            self.criteria_widget.min_price_spin.setValue(5.0)
-            self.criteria_widget.max_price_spin.setValue(500.0)
-            self.criteria_widget.min_volume_spin.setValue(1000000)
-            self.criteria_widget.min_change_spin.setValue(2.0)
-            self.criteria_widget.max_change_spin.setValue(20.0)
-            self.criteria_widget.min_rsi_spin.setValue(30)
-            self.criteria_widget.max_rsi_spin.setValue(80)
-            
-            # Enable momentum strategy by default
-            self.criteria_widget.momentum_chk.setChecked(True)
-            
-            # Update status and start scan
-            self.update_criteria_status()
-            self.start_scan()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Quick Scan Error", f"Failed to start quick scan: {e}")
     
     def update_criteria_status(self):
         """Update the criteria status display"""
@@ -3162,8 +3121,8 @@ class ScanSettingsDialog(QDialog):
         super().__init__(parent)
         self.criteria_widget = criteria_widget
         self.setWindowTitle("🔧 Scanner Settings & Presets")
-        self.setMinimumSize(900, 700)
-        self.resize(1000, 800)
+        self.setMinimumSize(800, 500)
+        self.resize(900, 600)
         self.setup_ui()
     
     def setup_ui(self):
@@ -3196,11 +3155,51 @@ class ScanSettingsDialog(QDialog):
         line.setStyleSheet("color: #BDC3C7;")
         layout.addWidget(line)
         
-        # Add the criteria widget to the dialog
-        scroll_area = QWidget()
-        scroll_layout = QVBoxLayout(scroll_area)
-        scroll_layout.addWidget(self.criteria_widget)
-        layout.addWidget(scroll_area, 1)  # Give it stretch
+        # Quick presets section (moved before criteria widget)
+        presets_frame = QFrame()
+        presets_frame.setFrameStyle(QFrame.Shape.Box)
+        presets_frame.setStyleSheet("QFrame { background-color: #F8F9FA; border: 1px solid #DEE2E6; border-radius: 4px; }")
+        presets_layout = QVBoxLayout(presets_frame)
+        presets_layout.setContentsMargins(8, 8, 8, 8)
+        
+        presets_title = QLabel("🚀 Quick Presets")
+        presets_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        presets_title.setStyleSheet("color: #495057; margin: 2px;")
+        presets_layout.addWidget(presets_title)
+        
+        presets_buttons_layout = QHBoxLayout()
+        presets_buttons_layout.setSpacing(5)
+        
+        # Conservative preset
+        conservative_btn = QPushButton("🛡️ Conservative")
+        conservative_btn.clicked.connect(self.apply_conservative_preset)
+        conservative_btn.setStyleSheet("QPushButton { padding: 3px 6px; font-size: 10px; }")
+        conservative_btn.setToolTip("Stable stocks with moderate movement (Price: $10-200, Change: 1-8%)")
+        presets_buttons_layout.addWidget(conservative_btn)
+        
+        # Aggressive preset  
+        aggressive_btn = QPushButton("🔥 Aggressive")
+        aggressive_btn.clicked.connect(self.apply_aggressive_preset)
+        aggressive_btn.setStyleSheet("QPushButton { padding: 3px 6px; font-size: 10px; }")
+        aggressive_btn.setToolTip("High-growth stocks with high volatility (Change: 5-50%)")
+        presets_buttons_layout.addWidget(aggressive_btn)
+        
+        # Penny stocks preset
+        penny_btn = QPushButton("💰 Penny Stocks")
+        penny_btn.clicked.connect(self.apply_penny_preset)
+        penny_btn.setStyleSheet("QPushButton { padding: 3px 6px; font-size: 10px; }")
+        penny_btn.setToolTip("Low-price stocks under $5 with high volatility")
+        presets_buttons_layout.addWidget(penny_btn)
+        
+        # Blue chip preset
+        bluechip_btn = QPushButton("🏛️ Blue Chip")
+        bluechip_btn.clicked.connect(self.apply_bluechip_preset)
+        bluechip_btn.setStyleSheet("QPushButton { padding: 3px 6px; font-size: 10px; }")
+        bluechip_btn.setToolTip("Large stable companies over $50 with low volatility")
+        presets_buttons_layout.addWidget(bluechip_btn)
+        
+        presets_layout.addLayout(presets_buttons_layout)
+        layout.addWidget(presets_frame)
         
         # Separator line
         line2 = QFrame()
@@ -3209,7 +3208,15 @@ class ScanSettingsDialog(QDialog):
         line2.setStyleSheet("color: #BDC3C7;")
         layout.addWidget(line2)
         
-        # Quick presets section
+        # Add the criteria widget to a scroll area
+        from PyQt6.QtWidgets import QScrollArea
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setWidget(self.criteria_widget)
+        scroll_area.setMaximumHeight(350)  # Limit height to prevent overlap
+        layout.addWidget(scroll_area, 1)  # Give it stretch
         presets_frame = QFrame()
         presets_frame.setFrameStyle(QFrame.Shape.Box)
         presets_frame.setStyleSheet("QFrame { background-color: #F8F9FA; border: 1px solid #DEE2E6; border-radius: 4px; }")

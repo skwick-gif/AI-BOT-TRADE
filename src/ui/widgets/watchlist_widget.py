@@ -8,6 +8,7 @@ from PyQt6.QtGui import QFont, QColor, QAction
 from datetime import datetime
 import json
 import re
+import os
 
 # Optional imports with fallbacks
 try:
@@ -29,7 +30,9 @@ class WatchlistTable(QTableWidget):
     def __init__(self):
         super().__init__()
         self.symbol_data = {}
+        self.watchlist_file = "data/watchlist.json"
         self.setup_ui()
+        self.load_watchlist()
 
     def setup_ui(self):
         headers = [
@@ -124,6 +127,7 @@ class WatchlistTable(QTableWidget):
             'ai_prediction': None,
             'ai_timestamp': None
         }
+        self.save_watchlist()  # Auto-save when symbol added
         return True
 
     def remove_symbol(self, symbol: str):
@@ -139,6 +143,7 @@ class WatchlistTable(QTableWidget):
             if data['row'] > row:
                 data['row'] -= 1
         
+        self.save_watchlist()  # Auto-save when symbol removed
         return True
 
     def show_context_menu(self, position):
@@ -329,6 +334,132 @@ class WatchlistTable(QTableWidget):
         if row < self.rowCount():
             ai_item = QTableWidgetItem(f"❌ {error_msg[:10]}")
             self.setItem(row, 11, ai_item)
+    
+    def save_watchlist(self):
+        """Save watchlist to JSON file"""
+        try:
+            import os
+            os.makedirs("data", exist_ok=True)
+            
+            # Collect current symbols with their add dates
+            watchlist_data = {
+                "symbols": [],
+                "last_updated": datetime.now().isoformat()
+            }
+            
+            for symbol, data in self.symbol_data.items():
+                row = data['row']
+                # Get the date from the table
+                date_item = self.item(row, 1)
+                added_date = date_item.text() if date_item else datetime.now().strftime("%Y-%m-%d %H:%M")
+                
+                watchlist_data["symbols"].append({
+                    "symbol": symbol,
+                    "added_at": added_date,
+                    "ai_rating": data.get('ai_rating'),
+                    "ai_prediction": data.get('ai_prediction'),
+                    "ai_timestamp": data.get('ai_timestamp')
+                })
+            
+            with open(self.watchlist_file, 'w') as f:
+                json.dump(watchlist_data, f, indent=2)
+                
+        except Exception as e:
+            print(f"Error saving watchlist: {e}")
+    
+    def load_watchlist(self):
+        """Load watchlist from JSON file"""
+        try:
+            if not os.path.exists(self.watchlist_file):
+                return
+                
+            with open(self.watchlist_file, 'r') as f:
+                watchlist_data = json.load(f)
+            
+            # Add symbols from saved data
+            for symbol_info in watchlist_data.get("symbols", []):
+                symbol = symbol_info["symbol"]
+                if symbol not in self.symbol_data:
+                    # Add symbol without triggering save
+                    self._add_symbol_silent(symbol, symbol_info.get("added_at"))
+                    
+        except Exception as e:
+            print(f"Error loading watchlist: {e}")
+    
+    def _add_symbol_silent(self, symbol: str, added_at: str = None):
+        """Add symbol without triggering save (for loading)"""
+        if symbol in self.symbol_data:
+            return False
+        
+        row = self.rowCount()
+        self.insertRow(row)
+        symbol_item = QTableWidgetItem(symbol)
+        symbol_item.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        self.setItem(row, 0, symbol_item)
+        
+        if not added_at:
+            added_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        added_item = QTableWidgetItem(added_at)
+        added_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setItem(row, 1, added_item)
+        
+        for col in range(2, self.columnCount() - 1):
+            item = QTableWidgetItem("-")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+            self.setItem(row, col, item)
+
+        # Add tools column (same as regular add_symbol)
+        tools_widget = QWidget()
+        hl = QHBoxLayout(tools_widget)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(2)
+        hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        def mk_btn(tip: str, icon_text: str):
+            btn = QToolButton()
+            btn.setToolTip(tip)
+            btn.setText(icon_text)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setAutoRaise(False)
+            btn.setStyleSheet("""
+                QToolButton {
+                    font-size: 10px; 
+                    font-weight: bold;
+                    padding: 4px 6px;
+                    border: 1px solid #ccc;
+                    background-color: #f8f9fa;
+                    border-radius: 4px;
+                    color: #333;
+                    min-width: 20px;
+                    min-height: 20px;
+                }
+                QToolButton:hover {
+                    background-color: #e9ecef;
+                    border-color: #adb5bd;
+                }
+            """)
+            return btn
+        
+        # AI button
+        ai_btn = mk_btn("Get AI Rating", "🤖")
+        ai_btn.clicked.connect(lambda: self.tools_action.emit("ai", symbol))
+        hl.addWidget(ai_btn)
+        
+        # Chart button  
+        chart_btn = mk_btn("Open Chart", "📊") 
+        chart_btn.clicked.connect(lambda: self.tools_action.emit("chart", symbol))
+        hl.addWidget(chart_btn)
+        
+        self.setCellWidget(row, self.columnCount() - 1, tools_widget)
+        
+        self.symbol_data[symbol] = {
+            'row': row, 
+            'data': {},
+            'ai_rating': None,
+            'ai_prediction': None,
+            'ai_timestamp': None
+        }
+        return True
 
 
 class WatchlistDetails(QFrame):
