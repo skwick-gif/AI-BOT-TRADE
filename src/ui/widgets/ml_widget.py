@@ -2107,7 +2107,8 @@ class MLWidget(QWidget):
         # Auto AI checkbox: when enabled, the app will automatically ask the AI after a single-stock run
         try:
             self.auto_ai_checkbox = QCheckBox("Auto AI (ask after training)")
-            self.auto_ai_checkbox.setChecked(False)
+            # Default to enabled so single-symbol runs automatically ask the AI
+            self.auto_ai_checkbox.setChecked(True)
             self.auto_ai_checkbox.setToolTip("If checked, the app will automatically send the compact prompt to the AI after a single-stock pipeline run and display the response in the right-most cell.")
             # Keep it visually small and left-aligned under the compact table
             cb_row = QWidget()
@@ -2920,50 +2921,25 @@ Full report saved to data/silver/reports/"""
         except Exception:
             return f"You are a professional financial analyst. Provide a precise 7-day price prediction for {symbol} and output only the predicted price as a single number in USD."
 
-    def _call_ai(self, prompt: str) -> str:
-        """Call Perplexity API using configured Perplexity settings (no mock).
+    def _call_ai(self, prompt: str, symbol: str = None) -> str:
+        """Delegate AI call to AIService so ML widget uses same Perplexity settings as Watchlist.
 
-        Uses `core.config_manager.ConfigManager` to read PERPLEXITY config from the environment
-        or .env file. Returns the assistant text on success or an error string on failure.
+        Uses AIService.analyze_stock_simple (sync) to preserve behavior and config-driven model/filters.
         """
         try:
-            import requests
-            import json
             from core.config_manager import ConfigManager
+            from services.ai_service import AIService
 
             cfg = ConfigManager()
-            api_key = getattr(cfg.perplexity, 'api_key', '')
-            model = getattr(cfg.perplexity, 'model', 'reasoning-pro')
-            max_tokens = getattr(cfg.perplexity, 'max_tokens', 800)
-
-            if not api_key:
-                return "Perplexity API key not configured. Please set PERPLEXITY_API_KEY in your .env and restart the app."
-
-            url = "https://api.perplexity.ai/chat/completions"
-            headers = {
-                'Authorization': f'Bearer {api_key}',
-                'Content-Type': 'application/json'
-            }
-
-            payload = {
-                'model': model,
-                'messages': [
-                    {'role': 'system', 'content': 'You are a professional financial analyst. Keep answers concise and actionable.'},
-                    {'role': 'user', 'content': prompt}
-                ],
-                'max_tokens': max_tokens,
-                'temperature': 0.2,
-                'top_p': 0.9,
-                'stream': False
-            }
-
-            session = requests.Session()
-            resp = session.post(url, headers=headers, json=payload, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            if 'choices' in data and len(data['choices']) > 0:
-                return data['choices'][0].get('message', {}).get('content', '') or ''
-            return ''
+            svc = AIService(cfg)
+            # analyze_stock_simple returns raw text or None
+            try:
+                text = svc.analyze_stock_simple(prompt, symbol or '', timeout=30)
+                if text is None:
+                    return ""
+                return text
+            except Exception as e:
+                return f"AI call failed: {e}"
         except Exception as e:
             return f"AI call failed: {e}"
 
@@ -3108,52 +3084,110 @@ Full report saved to data/silver/reports/"""
         If prompt_text is supplied, the worker will use it instead of rebuilding the prompt.
         """
         try:
-            # Use QRunnable to avoid creating lots of QThreads
-            from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
+            # Use a QThread + QObject worker to run the async Perplexity path
+            # This mirrors the Watchlist pattern (create an event loop and call the async API)
+            from PyQt6.QtCore import QThread, QObject, pyqtSignal
 
-            class _Worker(QRunnable):
-                def __init__(self, outer, symbol, payload):
+            class _AIWorker(QObject):
+                finished = pyqtSignal(str)
+                error = pyqtSignal(str)
+
+                def __init__(self, prompt: str, cfg):
                     super().__init__()
-                    self.outer = outer
-                    self.symbol = symbol
-                    self.payload = payload
-                    self.prompt_text = None
-
-                def set_prompt(self, prompt):
-                    self.prompt_text = prompt
+                    self.prompt = prompt
+                    self.cfg = cfg
 
                 def run(self):
                     try:
-                        # pass the full compact payload so prompt builder can access per_horizon/meta
-                        if self.prompt_text:
-                            prompt = self.prompt_text
-                        else:
-                            prompt = self.outer._build_generic_prompt(self.symbol, self.payload)
-                        res = self.outer._call_ai(prompt)
-                        # Update UI on main thread
+                        # Import here to avoid top-level event loop issues
+                        import asyncio
+                        from services.ai_service import AIService
+
+                        svc = AIService(self.cfg)
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
                         try:
-                            self.outer._set_ai_response_cell(res)
+                            # Call the same async Perplexity path used elsewhere
+                            text = loop.run_until_complete(svc._call_perplexity_api(self.prompt))
+                        finally:
                             try:
-                                if hasattr(self.outer, 'performance_widget') and getattr(self.outer, 'performance_widget'):
-                                    self.outer.performance_widget.add_log_entry(f"Auto AI response received for {self.symbol}")
+                                loop.close()
                             except Exception:
                                 pass
-                        except Exception:
-                            pass
+
+                        if text is None:
+                            self.error.emit('No response from AI')
+                        else:
+                            self.finished.emit(text)
                     except Exception as e:
                         try:
-                            self.outer._set_ai_response_cell(f"AI Error: {e}")
+                            self.error.emit(str(e))
                         except Exception:
                             pass
 
-            wk = _Worker(self, symbol, compact_payload)
+            # Build prompt if not provided
             if prompt_text:
+                prompt = prompt_text
+            else:
+                prompt = self._build_generic_prompt(symbol, compact_payload)
+
+            # Show sending state in UI
+            try:
+                self._set_ai_sending_state(prompt, symbol)
+            except Exception:
+                pass
+
+            # Acquire config
+            try:
+                from core.config_manager import ConfigManager
+                cfg = ConfigManager()
+            except Exception:
+                cfg = None
+
+            worker = _AIWorker(prompt, cfg)
+            thread = QThread()
+            worker.moveToThread(thread)
+
+            # Wire signals
+            thread.started.connect(worker.run)
+
+            def _on_finished(txt: str):
                 try:
-                    wk.set_prompt(prompt_text)
-                except Exception:
-                    pass
-            pool = QThreadPool.globalInstance()
-            pool.start(wk)
+                    self._set_ai_response_cell(txt)
+                    try:
+                        if hasattr(self, 'performance_widget') and getattr(self, 'performance_widget'):
+                            self.performance_widget.add_log_entry(f"Auto AI response received for {symbol}")
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        thread.quit()
+                    except Exception:
+                        pass
+
+            def _on_error(err: str):
+                try:
+                    self._set_ai_response_cell(f"AI Error: {err}")
+                finally:
+                    try:
+                        thread.quit()
+                    except Exception:
+                        pass
+
+            worker.finished.connect(_on_finished)
+            worker.error.connect(_on_error)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+
+            # Keep reference so callers/tests can wait for completion and prevent
+            # QThread destruction while still running (prevents abrupt crash)
+            try:
+                self._last_ai_thread = thread
+                self._last_ai_worker = worker
+            except Exception:
+                pass
+
+            thread.start()
         except Exception as e:
             try:
                 self._set_ai_response_cell(f"AI Error: {e}")
