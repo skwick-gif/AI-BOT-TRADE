@@ -112,7 +112,7 @@ class ConfigManager:
             api_key=os.getenv("PERPLEXITY_API_KEY", ""),
             model=os.getenv("PERPLEXITY_MODEL", "reasoning-pro"),
             force_finance=(os.getenv("PERPLEXITY_FORCE_FINANCE", "true").lower() in ("1","true","yes")),
-            finance_model=os.getenv("PERPLEXITY_FINANCE_MODEL", "llama-3.1-sonar-small-128k-online"),
+            finance_model=os.getenv("PERPLEXITY_FINANCE_MODEL", "sonar"),
             search_domains=os.getenv("PERPLEXITY_SEARCH_DOMAINS", "finance.yahoo.com,marketwatch.com,bloomberg.com,reuters.com"),
             search_recency=os.getenv("PERPLEXITY_SEARCH_RECENCY", "week"),
             max_tokens=self._get_int("PERPLEXITY_MAX_TOKENS", 2000)
