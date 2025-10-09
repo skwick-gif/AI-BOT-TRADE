@@ -6,7 +6,7 @@ Based on the provided PyQt6 examples with enhanced functionality
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTabWidget, QStatusBar, QMenuBar, QMessageBox,
-    QToolBar, QLabel, QPushButton, QDialog, QTextBrowser
+    QToolBar, QLabel, QPushButton, QDialog, QTextBrowser, QTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QAction, QIcon, QFont
@@ -157,6 +157,11 @@ class MainWindow(QMainWindow):
         
         # File Menu
         file_menu = menubar.addMenu("File")
+
+        edit_prompts_action = QAction("Edit Prompts...", self)
+        edit_prompts_action.triggered.connect(self.show_prompts_editor)
+        file_menu.addAction(edit_prompts_action)
+        file_menu.addSeparator()
         
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Ctrl+Q")
@@ -215,6 +220,84 @@ class MainWindow(QMainWindow):
         daily_update_action = QAction("Daily Update…", self)
         daily_update_action.triggered.connect(self.show_daily_update_dialog)
         data_menu.addAction(daily_update_action)
+
+    def show_prompts_editor(self):
+        """Open a minimal dialog to view/edit/save config/prompts.json"""
+        try:
+            project_root = Path(__file__).resolve().parents[3]
+            prompts_path = project_root / "config" / "prompts.json"
+
+            # Ensure parent exists
+            if not prompts_path.parent.exists():
+                prompts_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if prompts_path.exists():
+                try:
+                    text = prompts_path.read_text(encoding="utf-8")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to read prompts file:\n{e}")
+                    return
+            else:
+                # Start with an empty JSON object
+                text = "{}"
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Edit Prompts (config/prompts.json)")
+            dlg.resize(900, 600)
+
+            layout = QVBoxLayout(dlg)
+
+            editor = QTextEdit(dlg)
+            editor.setPlainText(text)
+            font = editor.font()
+            font.setFamily("Consolas")
+            font.setPointSize(10)
+            editor.setFont(font)
+            layout.addWidget(editor)
+
+            btn_layout = QHBoxLayout()
+            save_btn = QPushButton("Save")
+            reload_btn = QPushButton("Reload")
+            close_btn = QPushButton("Close")
+            btn_layout.addWidget(save_btn)
+            btn_layout.addWidget(reload_btn)
+            btn_layout.addStretch()
+            btn_layout.addWidget(close_btn)
+            layout.addLayout(btn_layout)
+
+            def do_save():
+                raw = editor.toPlainText()
+                # Validate JSON
+                try:
+                    import json as _json
+                    _json.loads(raw)
+                except Exception as e:
+                    QMessageBox.warning(dlg, "Invalid JSON", f"Cannot save: JSON is invalid:\n{e}")
+                    return
+                try:
+                    prompts_path.write_text(raw, encoding="utf-8")
+                    QMessageBox.information(dlg, "Saved", "prompts.json saved successfully.")
+                except Exception as e:
+                    QMessageBox.critical(dlg, "Save Error", f"Failed to save prompts file:\n{e}")
+
+            def do_reload():
+                try:
+                    if prompts_path.exists():
+                        editor.setPlainText(prompts_path.read_text(encoding="utf-8"))
+                    else:
+                        editor.setPlainText("{}")
+                except Exception as e:
+                    QMessageBox.critical(dlg, "Reload Error", f"Failed to reload prompts file:\n{e}")
+
+            save_btn.clicked.connect(do_save)
+            reload_btn.clicked.connect(do_reload)
+            close_btn.clicked.connect(dlg.accept)
+
+            dlg.exec()
+
+        except Exception as e:
+            self.logger.error(f"Error opening Prompts editor: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open Prompts editor:\n{e}")
     
     def create_toolbar(self):
         """Create toolbar"""

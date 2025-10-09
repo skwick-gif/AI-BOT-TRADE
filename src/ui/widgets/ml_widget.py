@@ -2912,10 +2912,32 @@ Full report saved to data/silver/reports/"""
         The returned prompt is exactly the template requested by the user with the
         ticker symbol inserted in place of [TICKER].
         """
+        # Prefer loading prompt template from PromptsManager (allows live edits)
+        try:
+            from core.prompts_manager import PromptsManager
+            pm = getattr(self, '_prompts_manager', None)
+            if pm is None:
+                pm = PromptsManager()
+                # Keep an instance on the widget so it persists and can emit signals
+                self._prompts_manager = pm
+                try:
+                    pm.prompts_changed.connect(lambda: self.performance_widget.add_log_entry('Prompts reloaded'))
+                except Exception:
+                    pass
+
+            templ = pm.get_prompt_by_id('ml_single_symbol_7d')
+            if templ:
+                t = str(symbol).upper() if symbol else "TICKER"
+                return templ.replace('{{ticker}}', t).replace('{TICKER}', t)
+
+        except Exception:
+            # Fall through to default template
+            pass
+
         try:
             t = str(symbol).upper() if symbol else "TICKER"
             prompt = (
-                f"You are a  professional financial analyst. Provide a precise 7-day price prediction for {t} by analyzing ALL of the following factors: current financial metrics, recent earnings/guidance, upcoming earnings or corporate events (if any), overall market sentiment (VIX, fear/greed index), sector performance, trading volume patterns, analyst ratings and forecasts, insider trading activity, options flow (including short interest and put/call ratio), technical indicators, macroeconomic events, regulatory or legislative changes, ESG scores, global geopolitical events, patent filings and major product launches, and any relevant news or catalysts. If no significant upcoming events exist, focus on current market dynamics and seasonal effects. Output only the predicted price as a single number in USD."
+                f"You are a  professional financial analyst. Provide a precise 7-day price prediction for {t} by analyzing ALL of the following factors: current financial metrics, recent earnings/guidance, upcoming earnings or corporate events (if any), overall market sentiment (VIX, fear/greed index), sector performance, trading volume patterns, analyst ratings and forecasts, insider trading activity, options flow (including short interest and put/call ratio), technical indicators, macroeconomic events, regulatory or legislative changes, ESG scores, global geopolitical events, patent filings and major product launches, and any relevant news or catalysts. If no significant upcoming events exist, focus on current market dynamics and seasonal effects.\n\nReturn only valid JSON — no text, no markdown, no explanations.\n\nOutput format: {{ \"score\": <integer 0–10>, \"price_target\": <float, USD> }}"
             )
             return prompt
         except Exception:
@@ -3108,7 +3130,17 @@ Full report saved to data/silver/reports/"""
                         asyncio.set_event_loop(loop)
                         try:
                             # Call the same async Perplexity path used elsewhere
-                            text = loop.run_until_complete(svc._call_perplexity_api(self.prompt))
+                            # Use the configured finance model and disable fallback so we
+                            # mirror the Watchlist behavior and avoid the 'sonar' fallback.
+                            explicit_model = None
+                            try:
+                                explicit_model = getattr(self.cfg.perplexity, 'finance_model', None) if self.cfg else None
+                            except Exception:
+                                explicit_model = None
+
+                            text = loop.run_until_complete(
+                                svc._call_perplexity_api(self.prompt, allow_fallback=False, explicit_model=explicit_model)
+                            )
                         finally:
                             try:
                                 loop.close()
