@@ -461,7 +461,15 @@ class ModelPerformanceWidget(QFrame):
         self.metrics_table = QTableWidget(0, 2)
         self.metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
         self.metrics_table.horizontalHeader().setStretchLastSection(True)
-        self.metrics_table.setMaximumHeight(200)
+        # Responsive table height
+        from PyQt6.QtWidgets import QApplication as QtApp
+        screen = QtApp.primaryScreen()  
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens
+            self.metrics_table.setMaximumHeight(120)
+        else:
+            self.metrics_table.setMaximumHeight(200)
         layout.addWidget(self.metrics_table)
 
         # Metrics viewer controls
@@ -516,7 +524,11 @@ class ModelPerformanceWidget(QFrame):
         layout.addWidget(log_label)
         
         self.training_log = QTextEdit()
-        self.training_log.setMaximumHeight(150)
+        # Responsive training log height
+        if screen_height <= 768:  # Small screens
+            self.training_log.setMaximumHeight(100)
+        else:
+            self.training_log.setMaximumHeight(150)
         self.training_log.setReadOnly(True)
         layout.addWidget(self.training_log)
     
@@ -1744,23 +1756,37 @@ class MLWidget(QWidget):
         self.logger.info("ML widget initialized")
     
     def create_pipeline_tab(self):
-        """Create the pipeline tab widget"""
+        """Create the pipeline tab widget with responsive scroll area"""
+        from PyQt6.QtWidgets import QScrollArea
+        
+        # Create scroll area for small screens
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
         tab_widget = QWidget()
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)  # Reduced spacing
+        layout.setSpacing(5)  # Reduced spacing for small screens
 
         # Titles row - align configuration and progress titles
         titles_layout = QHBoxLayout()
         
+        # Responsive font sizes - get QApplication from the import at top of file
+        from PyQt6.QtWidgets import QApplication as QtApp
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        title_font_size = 10 if screen_height <= 768 else 12
+        
         config_title = QLabel("Pipeline Configuration")
-        config_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        config_title.setFont(QFont("Arial", title_font_size, QFont.Weight.Bold))
         titles_layout.addWidget(config_title)
         
         titles_layout.addStretch()
         
         progress_title = QLabel("Pipeline Progress")
-        progress_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        progress_title.setFont(QFont("Arial", title_font_size, QFont.Weight.Bold))
         titles_layout.addWidget(progress_title)
         
         layout.addLayout(titles_layout)
@@ -1900,7 +1926,10 @@ class MLWidget(QWidget):
         # Step counter label
         self.pipeline_step_label = QLabel("Steps: 0/0")
         self.pipeline_step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pipeline_step_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        
+        # Responsive font size for step counter
+        step_font_size = 8 if screen_height <= 768 else 10
+        self.pipeline_step_label.setFont(QFont("Arial", step_font_size, QFont.Weight.Bold))
         progress_layout.addWidget(self.pipeline_step_label)
 
         # Progress bar for pipeline
@@ -1914,8 +1943,19 @@ class MLWidget(QWidget):
         progress_layout.addWidget(progress_steps_label)
         
         self.pipeline_progress_details = QTextEdit()
-        self.pipeline_progress_details.setMinimumHeight(300)  # Increased height
-        self.pipeline_progress_details.setMaximumHeight(400)  # Set max height for better responsiveness
+        # Responsive heights based on screen size
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens (laptop 15")
+            self.pipeline_progress_details.setMinimumHeight(200)
+            self.pipeline_progress_details.setMaximumHeight(250)
+        elif screen_height <= 1080:  # Medium screens
+            self.pipeline_progress_details.setMinimumHeight(250)
+            self.pipeline_progress_details.setMaximumHeight(300)
+        else:  # Large screens
+            self.pipeline_progress_details.setMinimumHeight(300)
+            self.pipeline_progress_details.setMaximumHeight(400)
         self.pipeline_progress_details.setReadOnly(True)
         self.pipeline_progress_details.setPlainText("Ready to run pipeline...")
         # Improve scroll behavior
@@ -1930,7 +1970,17 @@ class MLWidget(QWidget):
         main_h_layout.addWidget(progress_frame)
         layout.addLayout(main_h_layout)
         
-        return tab_widget
+        # Set up scroll area for small screens
+        scroll_area.setWidget(tab_widget)
+        
+        # Check screen size and return appropriate widget
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens need scroll
+            return scroll_area
+        else:
+            return tab_widget
     
     def _on_window_changed(self, text: str):
         """Handle window combo box changes to enable/disable lookback field"""
