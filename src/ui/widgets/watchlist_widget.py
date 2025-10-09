@@ -236,25 +236,28 @@ class WatchlistTable(QTableWidget):
                             else:
                                 rating = f"Error: {error_msg[:15]}"
                         
-                        # Get AI prediction/recommendation
+                        # Get AI prediction (BUY/SELL/HOLD signal)
                         try:
                             result = await ai_service.score_symbol(
                                 self.symbol,
                                 timeout=15.0
                             )
                             action = result.get('action', 'HOLD')
-                            reason = result.get('reason', 'No reason provided')
+                            reason = result.get('reason', 'No analysis available')
+                            # Format like original: "BUY: Good fundamentals..."
                             prediction = f"{action}: {reason[:25]}..."
                         except Exception as e:
                             error_msg = str(e)
                             if "SSL" in error_msg or "certificate" in error_msg:
-                                prediction = "SSL Error - Check network"
+                                prediction = "SSL Error"
                             elif "timeout" in error_msg.lower():
-                                prediction = "Request timed out"
+                                prediction = "Timeout"
                             elif "401" in error_msg or "unauthorized" in error_msg.lower():
-                                prediction = "API key invalid"
+                                prediction = "Auth Error"
+                            elif "400" in error_msg:
+                                prediction = "Bad Request"
                             else:
-                                prediction = f"Error: {error_msg[:25]}"
+                                prediction = f"Error: {error_msg[:15]}"
                         
                         return rating, prediction
                     
