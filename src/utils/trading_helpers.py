@@ -6,8 +6,17 @@ Includes portfolio management, technical analysis, and market data functions
 import os
 import re
 import pandas as pd
-import yfinance as yf
-import pandas_ta as ta
+# Note: we avoid calling yfinance for offline-first operation; local data loaders are used instead.
+try:
+    import yfinance as yf
+except Exception:
+    yf = None
+try:
+    import pandas_ta as ta
+except Exception:
+    ta = None
+    # don't raise here; some environments may not have a compatible pandas_ta
+    # functions that rely on it will handle ta==None gracefully
 import requests
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
@@ -136,21 +145,93 @@ def get_technicals(ticker: str) -> pd.DataFrame:
         DataFrame with technical indicators
     """
     try:
-        # Download stock data
-        stock = yf.Ticker(ticker)
-        data = stock.history(period="6mo")
-        
-        if data.empty:
+        # Offline-first: attempt to load local price data from parquet or stock_data folder
+        def _load_local_price_data(ticker_sym: str) -> pd.DataFrame | None:
+            from pathlib import Path
+
+            ticker_lower = ticker_sym.lower()
+
+            # 1) check data/bronze/daily/<TICKER>.parquet
+            data_dir = Path("data") / "bronze" / "daily"
+            try:
+                if data_dir.exists():
+                    for p in data_dir.glob('*.parquet'):
+                        if p.stem.lower() == ticker_lower:
+                            logger.info(f"Loading local parquet for {ticker_sym}: {p}")
+                            df = pd.read_parquet(p)
+                            return df
+            except Exception as e:
+                logger.warning(f"Error reading parquet files in {data_dir}: {e}")
+
+            # 2) search stock_data/ recursively for matching csv/parquet file
+            stock_data_root = Path("stock_data")
+            try:
+                if stock_data_root.exists():
+                    for p in stock_data_root.rglob('*'):
+                        if not p.is_file():
+                            continue
+                        stem = p.stem.lower()
+                        # accept exact stem match or stem that starts with ticker (some filenames like TICKER_prices)
+                        if stem == ticker_lower or stem.startswith(ticker_lower + '_') or stem.startswith(ticker_lower):
+                            try:
+                                if p.suffix.lower() == '.parquet':
+                                    df = pd.read_parquet(p)
+                                elif p.suffix.lower() in ('.csv', '.txt'):
+                                    df = pd.read_csv(p)
+                                else:
+                                    continue
+                                logger.info(f"Loading local stock_data file for {ticker_sym}: {p}")
+                                return df
+                            except Exception:
+                                continue
+            except Exception as e:
+                logger.warning(f"Error searching stock_data folder: {e}")
+
+            return None
+
+        data = _load_local_price_data(ticker)
+
+        # If local data not found, return empty (offline-first: do not call yfinance)
+        if data is None or (hasattr(data, 'empty') and data.empty):
+            logger.warning(f"No local price data available for {ticker}; offline-only mode")
             return pd.DataFrame()
+
+        # Normalize columns: accept common variants and ensure required columns exist
+        try:
+            # ensure date column
+            date_cols = [c for c in data.columns if c.lower() in ('date', 'datetime', 'time', 'timestamp', 'index')]
+            if 'date' not in data.columns and date_cols:
+                data = data.rename(columns={date_cols[0]: 'date'})
+            if 'date' in data.columns:
+                data['date'] = pd.to_datetime(data['date'])
+                data = data.sort_values('date').reset_index(drop=True)
+            # ensure close/adj_close
+            if 'close' not in data.columns and 'Close' in data.columns:
+                data = data.rename(columns={'Close': 'close'})
+            if 'adj_close' not in data.columns:
+                if 'Adj Close' in data.columns:
+                    data = data.rename(columns={'Adj Close': 'adj_close'})
+                else:
+                    data['adj_close'] = data['close'] if 'close' in data.columns else pd.NA
+        except Exception as e:
+            logger.warning(f"Failed to normalize price data for {ticker}: {e}")
         
-        # Calculate technical indicators
-        data.ta.sma(length=20, append=True)
-        data.ta.sma(length=50, append=True)
-        data.ta.rsi(append=True)
-        data.ta.macd(append=True)
-        data.ta.bbands(append=True)
-        data.ta.stoch(append=True)
-        
+        # Calculate technical indicators if pandas_ta is available
+        if ta is None:
+            logger.warning("pandas_ta not available; skipping technical indicator calculation")
+            return data
+
+        try:
+            # Use pandas_ta accessor
+            data.ta.sma(length=20, append=True)
+            data.ta.sma(length=50, append=True)
+            data.ta.rsi(append=True)
+            data.ta.macd(append=True)
+            data.ta.bbands(append=True)
+            data.ta.stoch(append=True)
+        except Exception as e:
+            logger.warning(f"pandas_ta calculation failed: {e}")
+
         return data
         
     except Exception as e:
@@ -168,13 +249,8 @@ def get_company_name(ticker: str) -> str:
     Returns:
         Company name or ticker if not found
     """
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        return info.get('longName', ticker)
-    except Exception as e:
-        logger.error(f"Error getting company name for {ticker}: {e}")
-        return ticker
+    # Offline mode: company name not available via local parquet; return ticker
+    return ticker
 
 
 def get_financials(ticker: str) -> Dict[str, Any]:
@@ -187,31 +263,9 @@ def get_financials(ticker: str) -> Dict[str, Any]:
     Returns:
         Dictionary with financial metrics
     """
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        financials = {
-            'marketCap': info.get('marketCap', 0),
-            'peRatio': info.get('trailingPE', 0),
-            'pbRatio': info.get('priceToBook', 0),
-            'dividendYield': info.get('dividendYield', 0),
-            'beta': info.get('beta', 0),
-            'eps': info.get('trailingEps', 0),
-            'revenue': info.get('totalRevenue', 0),
-            'profitMargin': info.get('profitMargins', 0),
-            'debtToEquity': info.get('debtToEquity', 0),
-            'currentRatio': info.get('currentRatio', 0),
-            'returnOnEquity': info.get('returnOnEquity', 0),
-            'sector': info.get('sector', 'Unknown'),
-            'industry': info.get('industry', 'Unknown')
-        }
-        
-        return financials
-        
-    except Exception as e:
-        logger.error(f"Error getting financials for {ticker}: {e}")
-        return {}
+    # Offline mode: financials not available via yfinance; return empty dict
+    logger.warning(f"get_financials: offline mode, financials not available for {ticker}")
+    return {}
 
 
 def get_small_cap_stocks() -> List[str]:

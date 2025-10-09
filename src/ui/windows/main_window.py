@@ -70,9 +70,25 @@ class MainWindow(QMainWindow):
         
         # Create tab widget
         self.tab_widget = QTabWidget()
+        # Make all tabs a uniform, reduced width so tab rectangles are shorter
+        # Adjust TAB_WIDTH to taste (in pixels)
+        TAB_WIDTH = 110
+        self.tab_widget.setStyleSheet(
+            f"QTabBar::tab {{ min-width: {TAB_WIDTH}px; max-width: {TAB_WIDTH}px; }}"
+        )
         main_layout.addWidget(self.tab_widget)
         
-        # Create tabs
+        # Start daily data update scheduler (create service first so tabs can reuse it)
+        try:
+            self.data_update_service = DataUpdateService()
+            # default schedule 01:30 local; dialog can change
+            from datetime import time as dtime
+            self.data_update_service.set_scheduled_time(dtime(hour=1, minute=30))
+            self.data_update_service.start()
+        except Exception as e:
+            self.logger.warning(f"Failed to start DataUpdateService: {e}")
+
+        # Create tabs (pass services where needed)
         self.create_tabs()
         
         # Create menu bar
@@ -90,15 +106,7 @@ class MainWindow(QMainWindow):
         # Apply theme
         self.apply_theme()
         
-        # Start daily data update scheduler (runs in background; configurable from ML->Data tab)
-        try:
-            self.data_update_service = DataUpdateService()
-            # default schedule 01:30 local; dialog can change
-            from datetime import time as dtime
-            self.data_update_service.set_scheduled_time(dtime(hour=1, minute=30))
-            self.data_update_service.start()
-        except Exception as e:
-            self.logger.warning(f"Failed to start DataUpdateService: {e}")
+        # (DataUpdateService already created above before tabs)
 
         # Setup status update timer
         self.status_timer = QTimer()
@@ -113,6 +121,11 @@ class MainWindow(QMainWindow):
         # Dashboard Tab
         self.dashboard_widget = DashboardWidget(None)  # Start with None, will be set when connected
         self.tab_widget.addTab(self.dashboard_widget, "📊 Dashboard")
+        # DATA Tab using dedicated DataWidget
+        from ui.widgets.data_widget import DataWidget
+        # Pass the centralized data_update_service into the DataWidget
+        self.data_tab = DataWidget(service=getattr(self, 'data_update_service', None))
+        self.tab_widget.addTab(self.data_tab, "DATA")
         # AI Trading Tab (replaces Portfolio)
         self.ai_trading_widget = AiTradingWidget()
         # Provide AI service instance for scoring

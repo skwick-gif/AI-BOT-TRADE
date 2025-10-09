@@ -5,10 +5,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QFont, QColor, QAction
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 import os
+from pathlib import Path
+
+# Optional pandas import
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 # Optional imports with fallbacks
 try:
@@ -51,6 +58,7 @@ class WatchlistTable(QTableWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.cellDoubleClicked.connect(self.on_cell_double_clicked)
+        self.itemChanged.connect(self.on_item_changed)
 
     def add_symbol(self, symbol: str):
         if symbol in self.symbol_data:
@@ -127,6 +135,13 @@ class WatchlistTable(QTableWidget):
             'ai_prediction': None,
             'ai_timestamp': None
         }
+        
+        # Make date column editable
+        self.make_date_editable(row, 1)
+        
+        # Load initial data
+        self.update_symbol_display(symbol)
+        
         self.save_watchlist()  # Auto-save when symbol added
         return True
 
@@ -180,6 +195,20 @@ class WatchlistTable(QTableWidget):
             symbol = symbol_item.text()
             self.symbol_selected.emit(symbol)
 
+    def on_item_changed(self, item):
+        """Handle item content change - specifically for date column edits"""
+        if item.column() == 1:  # נוסף בתאריך column
+            row = item.row()
+            symbol_item = self.item(row, 0)
+            if symbol_item:
+                symbol = symbol_item.text()
+                # Only update if the symbol is fully loaded in symbol_data
+                if symbol in self.symbol_data:
+                    # Update display with new reference date
+                    self.update_symbol_display(symbol)
+                    # Save the updated watchlist
+                    self.save_watchlist()
+
     def get_symbols(self) -> list:
         """Get all symbols in the watchlist"""
         return list(self.symbol_data.keys())
@@ -211,69 +240,58 @@ class WatchlistTable(QTableWidget):
                     if AIService is None:
                         self.error.emit(self.symbol, self.row, "AI Service not available")
                         return
-                        
+                    
+                    ai_service = AIService(self.config)
+                    
+                    # Use the SAME API call for both rating and prediction to avoid SSL issues
                     import asyncio
                     
-                    async def get_rating_and_prediction():
-                        ai_service = AIService(self.config)
-                        
-                        # Get AI rating (0-10 score) - using sync method like scanner
+                    async def get_both_rating_and_prediction():
                         try:
-                            # Use the existing ai_service instead of creating new one
-                            from services.ai_service import AIService
-                            from core.config_manager import ConfigManager
-                            config = ConfigManager().load()
-                            sync_ai_service = AIService(config)
-                            
-                            rating_score = sync_ai_service.score_symbol_numeric_sync(
-                                self.symbol, 
-                                timeout=8.0,
-                                profile="swing"  # Default to swing trading
-                            )
-                            rating = f"{rating_score:.1f}/10"
-                        except Exception as e:
-                            error_msg = str(e)
-                            if "SSL" in error_msg or "certificate" in error_msg:
-                                rating = "SSL Error"
-                            elif "timeout" in error_msg.lower():
-                                rating = "Timeout"
-                            elif "401" in error_msg or "unauthorized" in error_msg.lower():
-                                rating = "Auth Error"
-                            elif "400" in error_msg:
-                                rating = "400 Error"
-                            else:
-                                rating = "Error"
-                        
-                        # Get AI prediction (BUY/SELL/HOLD signal)
-                        try:
+                            # Single API call for both values
                             result = await ai_service.score_symbol(
                                 self.symbol,
                                 timeout=15.0
                             )
-                            action = result.get('action', 'HOLD')
-                            reason = result.get('reason', 'No analysis available')
-                            # Format like original: "BUY: Good fundamentals..."
-                            prediction = f"{action}: {reason[:25]}..."
+                            
+                            # Extract rating (0-10 score)
+                            score = result.get('score', 5.0)
+                            rating = f"{score:.1f}/10"
+                            
+                            # Extract 7-day price target
+                            price_target = result.get('price_target', None)
+                            
+                            if price_target is not None:
+                                try:
+                                    target = float(price_target)
+                                    prediction = f"${target:.2f} (7d)"
+                                except (ValueError, TypeError):
+                                    prediction = f"${price_target} (7d)"
+                            else:
+                                prediction = "No target"
+                            
+                            return rating, prediction
+                            
                         except Exception as e:
                             error_msg = str(e)
                             if "SSL" in error_msg or "certificate" in error_msg:
-                                prediction = "SSL Error"
+                                error_result = "SSL Error"
                             elif "timeout" in error_msg.lower():
-                                prediction = "Timeout"
+                                error_result = "Timeout"
                             elif "401" in error_msg or "unauthorized" in error_msg.lower():
-                                prediction = "Auth Error"
+                                error_result = "Auth Error"
                             elif "400" in error_msg:
-                                prediction = "Bad Request"
+                                error_result = "Bad Request"
                             else:
-                                prediction = f"Error: {error_msg[:15]}"
-                        
-                        return rating, prediction
+                                error_result = "Error"
+                            
+                            return error_result, error_result
                     
-                    # Run async function
+                    # Run single async call for both values
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     try:
-                        rating, prediction = loop.run_until_complete(get_rating_and_prediction())
+                        rating, prediction = loop.run_until_complete(get_both_rating_and_prediction())
                         self.finished.emit(self.symbol, self.row, rating, prediction)
                     finally:
                         loop.close()
@@ -302,7 +320,12 @@ class WatchlistTable(QTableWidget):
             self.ai_worker.finished.connect(self._on_ai_rating_finished)
             self.ai_worker.error.connect(self._on_ai_rating_error)
             self.ai_thread.started.connect(self.ai_worker.run)
+            
+            # Proper thread cleanup
+            self.ai_worker.finished.connect(self.ai_thread.quit)
+            self.ai_worker.error.connect(self.ai_thread.quit)
             self.ai_thread.finished.connect(self.ai_thread.deleteLater)
+            self.ai_thread.finished.connect(self.ai_worker.deleteLater)
             
             # Start thread
             self.ai_thread.start()
@@ -470,8 +493,146 @@ class WatchlistTable(QTableWidget):
             'ai_prediction': None,
             'ai_timestamp': None
         }
+        
+        # Make date column editable
+        self.make_date_editable(row, 1)
+        
+        # Load initial data
+        self.update_symbol_display(symbol)
+        
         return True
 
+    def load_symbol_data(self, symbol: str, reference_date: str = None):
+        """Load price data for a symbol from parquet files"""
+        if pd is None:
+            return None
+            
+        try:
+            # If no reference date provided, use today
+            if reference_date is None:
+                reference_date = datetime.now().strftime("%Y-%m-%d")
+            else:
+                # Parse the reference date from the table format
+                try:
+                    ref_dt = datetime.strptime(reference_date, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    try:
+                        ref_dt = datetime.strptime(reference_date, "%Y-%m-%d")
+                    except ValueError:
+                        ref_dt = datetime.now()
+                reference_date = ref_dt.strftime("%Y-%m-%d")
+            
+            # Try to load data from parquet
+            parquet_path = Path("data/bronze/daily") / f"{symbol}.parquet"
+            if not parquet_path.exists():
+                return None
+                
+            df = pd.read_parquet(parquet_path)
+            if df.empty:
+                return None
+                
+            # Ensure date column exists and is datetime
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.sort_values('date')
+            else:
+                return None
+            
+            # Find the reference date or closest date before it
+            ref_date = pd.to_datetime(reference_date)
+            df_filtered = df[df['date'] <= ref_date]
+            
+            if df_filtered.empty:
+                # If no data before reference date, use earliest available
+                df_filtered = df.head(1)
+            
+            # Get the latest data point from the filtered data
+            latest_row = df_filtered.iloc[-1]
+            
+            # Calculate 7-day price progression from reference date
+            end_date = ref_date + timedelta(days=7)
+            future_data = df[(df['date'] > ref_date) & (df['date'] <= end_date)]
+            
+            # Prepare daily progression data
+            daily_data = {}
+            for i in range(1, 8):  # Days 1-7
+                target_date = ref_date + timedelta(days=i)
+                day_data = future_data[future_data['date'] <= target_date]
+                if not day_data.empty:
+                    price = day_data.iloc[-1]['close'] if 'close' in day_data.columns else day_data.iloc[-1].get('adj_close', 0)
+                    daily_data[f'day_{i}'] = price
+                else:
+                    daily_data[f'day_{i}'] = None
+            
+            return {
+                'price': latest_row.get('close', latest_row.get('adj_close', 0)),
+                'volume': latest_row.get('volume', 0),
+                'daily_progression': daily_data,
+                'reference_date': reference_date
+            }
+            
+        except Exception as e:
+            print(f"Error loading data for {symbol}: {e}")
+            return None
+    
+    def update_symbol_display(self, symbol: str):
+        """Update the display data for a symbol"""
+        if symbol not in self.symbol_data:
+            return
+            
+        row = self.symbol_data[symbol]['row']
+        
+        # Get reference date from the "נוסף בתאריך" column
+        date_item = self.item(row, 1)
+        reference_date = date_item.text() if date_item else None
+        
+        # Load data
+        data = self.load_symbol_data(symbol, reference_date)
+        if data is None:
+            return
+            
+        # Update Price column (2)
+        price_item = QTableWidgetItem(f"${data['price']:.2f}")
+        price_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setItem(row, 2, price_item)
+        
+        # Update Volume column (3)  
+        volume_str = f"{data['volume']:,}" if data['volume'] > 0 else "-"
+        volume_item = QTableWidgetItem(volume_str)
+        volume_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setItem(row, 3, volume_item)
+        
+        # Update daily progression columns (4-10 = Days 1-7)
+        for i in range(1, 8):
+            col_index = 3 + i  # Columns 4-10
+            day_price = data['daily_progression'].get(f'day_{i}')
+            if day_price is not None:
+                # Calculate percentage change from reference price
+                if data['price'] > 0:
+                    pct_change = ((day_price - data['price']) / data['price']) * 100
+                    text = f"${day_price:.2f}\n({pct_change:+.1f}%)"
+                    color = QColor(0, 150, 0) if pct_change >= 0 else QColor(200, 0, 0)
+                else:
+                    text = f"${day_price:.2f}"
+                    color = QColor(0, 0, 0)
+            else:
+                text = "-"
+                color = QColor(100, 100, 100)
+                
+            item = QTableWidgetItem(text)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+            item.setForeground(color)
+            self.setItem(row, col_index, item)
+        
+        # Store data for future reference
+        self.symbol_data[symbol]['data'] = data
+
+    def make_date_editable(self, row: int, col: int):
+        """Make the date column editable for dynamic reference dates"""
+        if col == 1:  # נוסף בתאריך column
+            item = self.item(row, col)
+            if item:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
 
 
 class WatchlistWidget(QWidget):
@@ -713,6 +874,12 @@ class WatchlistWidget(QWidget):
     def refresh_data(self):
         """Manually refresh watchlist data"""
         symbols = self.watchlist_table.get_symbols()
+        
+        # Refresh price data from parquet files
+        for symbol in symbols:
+            self.watchlist_table.update_symbol_display(symbol)
+        
+        # Also try the old data worker if available
         if symbols and self.data_worker and hasattr(self.data_worker, 'start_monitoring'):
             try:
                 self.data_worker.stop_monitoring()
@@ -720,7 +887,7 @@ class WatchlistWidget(QWidget):
             except Exception as e:
                 self.logger.error(f"Error refreshing data: {e}")
         
-        self.logger.info("Manual watchlist refresh requested")
+        self.logger.info(f"Manual watchlist refresh completed for {len(symbols)} symbols")
 
     def delete_selected(self):
         """Delete the currently selected ticker from the list"""

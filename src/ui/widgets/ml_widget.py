@@ -42,57 +42,6 @@ class ModelTrainingWorker(QObject):
         self.logger = get_logger("MLTraining")
         self.is_training = False
     
-    def start_training(self, model_config: dict):
-        """Start model training"""
-        try:
-            self.is_training = True
-            self.status_updated.emit("Initializing training...")
-            self.progress_updated.emit(0)
-            
-            # Simulate training process
-            import time
-            
-            steps = [
-                "Initializing...",
-                "Loading configuration...", 
-                "Preparing training environment...",
-                "Ready for real data connection...",
-                "Training process ready...",
-                "Waiting for data source...",
-                "Training setup complete..."
-            ]
-            
-            for i, step in enumerate(steps):
-                if not self.is_training:
-                    break
-                    
-                self.status_updated.emit(step)
-                progress = int((i + 1) / len(steps) * 100)
-                self.progress_updated.emit(progress)
-                
-                # Simulate work
-                time.sleep(1.0)
-            
-            # Training completed successfully
-            if self.is_training:
-                # Training completed - return basic results structure
-                results = {
-                    'accuracy': 0.0,
-                    'precision': 0.0,
-                    'recall': 0.0,
-                    'f1_score': 0.0,
-                    'validation_loss': 0.0,
-                    'training_time': 0.0
-                }
-                
-                self.training_completed.emit(results)
-                self.status_updated.emit("Training completed - Connect to data source for real training!")
-            
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-        finally:
-            self.is_training = False
-    
     def stop_training(self):
         """Stop training process"""
         self.is_training = False
@@ -168,6 +117,9 @@ class PipelineRunWorker(QObject):
             self.error_occurred.emit("Pipeline is already running")
             return
         try:
+            # Import Path at the beginning of the method
+            from pathlib import Path
+            
             self.is_running = True
             print("PipelineRunWorker: Starting pipeline execution")
             p = params or {}
@@ -183,7 +135,9 @@ class PipelineRunWorker(QObject):
             self.status_updated.emit("Initializing pipeline config...")
             if self.ml_widget:
                 self.ml_widget.add_pipeline_step("Initialize Config", "running")
-            self.progress_updated.emit(2)
+            self.progress_updated.emit(5)  # Step 1/19 complete
+            # Force UI update
+            QApplication.processEvents()
 
             cfg = TrainingConfig()
             cfg.holdout_last_days = holdout
@@ -195,13 +149,28 @@ class PipelineRunWorker(QObject):
             cfg.use_volume = bool(p.get("use_volume", True))
             cfg.use_sentiment = bool(p.get("use_sentiment", False))
 
+            # Emit status about feature toggles for transparency
+            feat_msg = f"Feature toggles - technical={cfg.use_technical}, volume={cfg.use_volume}, sentiment={cfg.use_sentiment}"
+            self.status_updated.emit(feat_msg)
+            if self.ml_widget:
+                try:
+                    if hasattr(self.ml_widget, 'performance_widget') and getattr(self.ml_widget, 'performance_widget'):
+                        self.ml_widget.performance_widget.add_log_entry(feat_msg)
+                    else:
+                        # fallback if MLWidget provides add_log_entry directly
+                        self.ml_widget.add_log_entry(feat_msg)  # type: ignore
+                except Exception:
+                    pass
+
             if self.ml_widget:
                 self.ml_widget.add_pipeline_step("Initialize Config", "completed")
                 self.ml_widget.add_pipeline_step("Loading Data", "running")
 
             # Load bronze data once at the beginning with progress updates
             self.status_updated.emit("Loading bronze data (Parquet) files...")
-            self.progress_updated.emit(5)
+            self.progress_updated.emit(10)  # Step 2/19 complete  
+            # Force UI update
+            QApplication.processEvents()
             
             # Progress callback for data loading
             def data_progress_callback(progress):
@@ -220,7 +189,9 @@ class PipelineRunWorker(QObject):
             if self.ml_widget:
                 self.ml_widget.add_pipeline_step("Loading Data", "completed")
                 self.ml_widget.update_data_progress(0)  # Hide data progress bar
-            self.progress_updated.emit(10)
+            self.progress_updated.emit(15)  # Data loading complete
+            # Force UI update
+            QApplication.processEvents()
 
             # תהליך לולאת fine tuning לכל הורייזן
             best_result = None
@@ -232,6 +203,8 @@ class PipelineRunWorker(QObject):
                 cache_file = Path("data/cache/pooled_dataset.parquet")
                 self.status_updated.emit("Using default cache")
             
+            # Accumulate predictions across horizons so we can save them all at the end
+            all_preds_accumulator = {}
             for horizon in [1, 5, 10]:
                 if self.should_stop:
                     self.status_updated.emit("Pipeline stopped by user")
@@ -244,8 +217,27 @@ class PipelineRunWorker(QObject):
                 self.status_updated.emit(f"Building features and labels for horizon {horizon}…")
                 self.progress_updated.emit(15)
                 
-                # Use cache file for first horizon, then reuse cached data for others
-                use_cache = cache_file if horizon == 1 else None
+                # Use cache file for first horizon only when running over the full universe.
+                # If this run is for a single ticker, skip the cache to ensure the pooled
+                # dataset includes that ticker (cache may have been built earlier without it).
+                use_cache = None
+                skip_cache_reason = None
+                if horizon == 1 and (not tickers or len(tickers) != 1):
+                    use_cache = cache_file
+                else:
+                    # Single-ticker run or non-first horizon: skip disk cache
+                    use_cache = None
+                    skip_cache_reason = 'single-ticker or non-first horizon — skipping disk cache to include latest ticker features'
+                if skip_cache_reason:
+                    self.status_updated.emit(skip_cache_reason)
+                    if self.ml_widget:
+                        try:
+                            if hasattr(self.ml_widget, 'performance_widget') and getattr(self.ml_widget, 'performance_widget'):
+                                self.ml_widget.performance_widget.add_log_entry(skip_cache_reason)
+                            else:
+                                self.ml_widget.add_log_entry(skip_cache_reason)  # type: ignore
+                        except Exception:
+                            pass
                 use_parallel = bool(p.get("use_parallel", True))
                 pooled = build_pooled_dataset(bronze, cfg, cache_file=use_cache, use_parallel=use_parallel)
                 
@@ -267,12 +259,32 @@ class PipelineRunWorker(QObject):
                     if self.ml_widget:
                         self.ml_widget.add_pipeline_step(f"Training Loop {loop+1}/{max_loops} (H{horizon})", "running")
                     self.status_updated.emit(f"Training loop {loop+1}/{max_loops} for horizon {horizon}")
-                    self.progress_updated.emit(20 + int(loop * 10 / max_loops))
+                    # Let the step counter handle progress calculation automatically
+                    # The progress will be updated when steps are marked as completed
+                    
+                    # Force UI update by processing events
+                    if self.ml_widget and hasattr(self.ml_widget, 'parent'):
+                        QApplication.processEvents()
+                    
                     results, preds, model_scores, confusions = walk_forward_run(
                         pooled, cfg, selected_models=models if models else ["RandomForest"]
                     )
                     # תחזיות על תקופת holdout
-                    predictions = preds.get(str(horizon)) if preds else None
+                    # preds returned by walk_forward_run is a dict keyed by horizon strings
+                    # accumulate non-empty dataframes into all_preds_accumulator
+                    if preds:
+                        for pk, pv in preds.items():
+                            if pv is None or (hasattr(pv, 'empty') and pv.empty):
+                                continue
+                            all_preds_accumulator.setdefault(pk, []).append(pv)
+                    predictions = None
+                    if isinstance(all_preds_accumulator.get(str(horizon)), list):
+                        # concat pieces for this horizon
+                        import pandas as _pd
+                        try:
+                            predictions = _pd.concat(all_preds_accumulator.get(str(horizon)), ignore_index=True)
+                        except Exception:
+                            predictions = all_preds_accumulator.get(str(horizon))[0]
 
                     # הזנה לסורק (פשוט: בדיקה האם יש מניות עם תחזית UP)
                     scan_results = []
@@ -327,7 +339,17 @@ class PipelineRunWorker(QObject):
             try:
                 if self.ml_widget:
                     self.ml_widget.add_pipeline_step("Saving Predictions", "running")
-                saved = self._save_predictions({k: v for k, v in preds.items()}) if preds else 0
+                # Build final preds dict by concatenating accumulated dfs per horizon
+                final_preds = {}
+                import pandas as _pd
+                for k, lst in all_preds_accumulator.items():
+                    try:
+                        final_preds[k] = _pd.concat(lst, ignore_index=True) if isinstance(lst, list) and len(lst) > 0 else (_pd.DataFrame() if not lst else lst)
+                    except Exception:
+                        # fallback - take first element
+                        final_preds[k] = lst[0] if isinstance(lst, list) and lst else (_pd.DataFrame() if not lst else lst)
+
+                saved = self._save_predictions(final_preds) if final_preds else 0
             except Exception:
                 saved = 0
             try:
@@ -353,9 +375,10 @@ class PipelineRunWorker(QObject):
                 pd.DataFrame({"ticker": universe}).to_csv(outdir / "universe.csv", index=False)
                 # Signals: last predictions for best horizon with confidence/price_target if present
                 sig_rows = []
-                if preds and best_result:
+                # Use the aggregated final_preds for exporting simple signals
+                if final_preds and best_result:
                     bh = str(best_result.get("horizon"))
-                    dfp = preds.get(bh)
+                    dfp = final_preds.get(bh)
                     if dfp is not None and not dfp.empty:
                         # take last date per ticker
                         last = dfp.sort_values("date").groupby("ticker").tail(1)
@@ -378,15 +401,97 @@ class PipelineRunWorker(QObject):
                 self.ml_widget.add_pipeline_step("Exporting Signals", "completed")
 
             # Final result
+            # If this run was for a single ticker, prepare a compact in-memory payload
+            compact_payload = None
+            try:
+                # Use the aggregated final_preds (all horizons) when building compact payload
+                if isinstance(tickers, (list, tuple)) and len(tickers) == 1 and final_preds:
+                    sym = tickers[0].upper()
+                    signals = []
+                    price_targets = {}
+                    for h in [1, 5, 10]:
+                        # final_preds keys may be strings like '1' or ints; try both
+                        dfp = None
+                        if isinstance(final_preds, dict):
+                            dfp = final_preds.get(str(h)) or final_preds.get(h) or None
+                        if dfp is None or dfp.empty:
+                            continue
+                        # Filter for ticker (case-insensitive)
+                        if 'ticker' in dfp.columns:
+                            row = dfp[dfp['ticker'].str.upper() == sym]
+                            if row.empty:
+                                continue
+                            latest = row.sort_values('date').iloc[-1]
+                        else:
+                            latest = dfp.sort_values('date').iloc[-1]
+
+                        pred_lbl = str(latest.get('y_pred', 'HOLD')).upper()
+                        conf = float(latest.get('confidence', 0.0)) if latest.get('confidence', None) is not None else 0.0
+                        pt = float(latest.get('price_target', latest.get('adj_close', latest.get('close', 0.0))))
+                        model_name = latest.get('model', None)
+                        signals.append((h, pred_lbl, conf))
+                        # Use integer keys for horizons so UI lookups (1,5,10) work consistently
+                        price_targets[int(h)] = pt
+                        # store per-horizon meta so UI can show tooltips
+                        if 'meta' not in price_targets:
+                            price_targets['meta'] = {}
+                        # include the source date so UI can show which date the price_target refers to
+                        src_date = latest.get('date', None)
+                        # normalize to isoformat string if it's a Timestamp or datetime-like
+                        try:
+                            if hasattr(src_date, 'isoformat'):
+                                src_date_str = src_date.isoformat()
+                            else:
+                                src_date_str = str(src_date)
+                        except Exception:
+                            src_date_str = str(src_date)
+                        price_targets['meta'][int(h)] = {
+                            'confidence': conf,
+                            'model': model_name,
+                            'date': src_date_str,
+                        }
+
+                    # Derive overall signal via confidence-weighted vote
+                    if signals:
+                        score_map = {'BUY': 0.0, 'SELL': 0.0, 'HOLD': 0.0}
+                        for (_h, lbl, conf) in signals:
+                            if lbl == 'UP':
+                                score_map['BUY'] += conf
+                            elif lbl == 'DOWN':
+                                score_map['SELL'] += conf
+                            else:
+                                score_map['HOLD'] += conf
+                        overall = max(score_map.keys(), key=lambda k: score_map[k])
+                        compact_payload = {
+                            'symbol': sym,
+                            'overall_signal': overall,
+                            'price_targets': price_targets,
+                            # include per-horizon confidences for better UI display
+                            'per_horizon': {h: {'signal': lbl, 'confidence': conf} for (h, lbl, conf) in signals}
+                        }
+            except Exception:
+                compact_payload = None
+
             self.completed.emit({
                 "best_result": best_result or {},
                 "saved_predictions": int(saved),
+                "compact_table": compact_payload,
             })
+            # Persist compact payload to disk for debugging (works for headless runs too)
+            try:
+                if compact_payload is not None:
+                    from pathlib import Path as _Path
+                    import json as _json
+                    _Path('data/silver').mkdir(parents=True, exist_ok=True)
+                    fp = _Path('data/silver/debug_compact_from_worker.json')
+                    fp.write_text(_json.dumps(compact_payload, default=str, indent=2), encoding='utf-8')
+            except Exception:
+                pass
             if best_result:
                 self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
             else:
                 self.status_updated.emit("Pipeline completed, but no best result identified")
-            self.progress_updated.emit(100)
+            # DO NOT emit progress_updated(100) here - let the step counter handle it properly
 
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -446,7 +551,15 @@ class ModelPerformanceWidget(QFrame):
         self.metrics_table = QTableWidget(0, 2)
         self.metrics_table.setHorizontalHeaderLabels(["Metric", "Value"])
         self.metrics_table.horizontalHeader().setStretchLastSection(True)
-        self.metrics_table.setMaximumHeight(200)
+        # Responsive table height
+        from PyQt6.QtWidgets import QApplication as QtApp
+        screen = QtApp.primaryScreen()  
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens
+            self.metrics_table.setMaximumHeight(120)
+        else:
+            self.metrics_table.setMaximumHeight(200)
         layout.addWidget(self.metrics_table)
 
         # Metrics viewer controls
@@ -501,7 +614,11 @@ class ModelPerformanceWidget(QFrame):
         layout.addWidget(log_label)
         
         self.training_log = QTextEdit()
-        self.training_log.setMaximumHeight(150)
+        # Responsive training log height
+        if screen_height <= 768:  # Small screens
+            self.training_log.setMaximumHeight(100)
+        else:
+            self.training_log.setMaximumHeight(150)
         self.training_log.setReadOnly(True)
         layout.addWidget(self.training_log)
     
@@ -573,9 +690,50 @@ class ModelPerformanceWidget(QFrame):
         self.preds_table.setRowCount(len(df))
         self.preds_table.setColumnCount(len(cols))
         self.preds_table.setHorizontalHeaderLabels(cols)
-        for i, row in df.iterrows():
+        
+        # Enhanced display with colors and symbols
+        from PyQt6.QtGui import QColor
+        
+        for i, (idx, row) in enumerate(df.iterrows()):
             for j, col in enumerate(cols):
-                self.preds_table.setItem(i, j, QTableWidgetItem(str(row.get(col, ""))))
+                value = str(row.get(col, ""))
+                
+                # Enhanced display for predictions
+                if col == 'y_pred':
+                    if value.upper() == 'UP':
+                        value = "🟢 BUY"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(200, 255, 200))  # Light green
+                    elif value.upper() == 'DOWN':
+                        value = "🔴 SELL"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(255, 200, 200))  # Light red
+                    else:
+                        value = "🟡 HOLD"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(255, 255, 200))  # Light yellow
+                elif col == 'confidence':
+                    try:
+                        conf_val = float(value)
+                        item = QTableWidgetItem(f"{conf_val:.1%}")
+                        if conf_val > 0.7:
+                            item.setBackground(QColor(200, 255, 200))  # High confidence - green
+                        elif conf_val > 0.5:
+                            item.setBackground(QColor(255, 255, 200))  # Medium confidence - yellow
+                        else:
+                            item.setBackground(QColor(255, 230, 230))  # Low confidence - light red
+                    except:
+                        item = QTableWidgetItem(value)
+                elif col == 'price_target':
+                    try:
+                        price_val = float(value)
+                        item = QTableWidgetItem(f"${price_val:.2f}")
+                    except:
+                        item = QTableWidgetItem(value)
+                else:
+                    item = QTableWidgetItem(value)
+                
+                self.preds_table.setItem(i, j, item)
     
     def add_log_entry(self, message: str):
         """Add entry to training log"""
@@ -897,17 +1055,7 @@ class DataManagementWidget(QFrame):
         self.progress.setValue(0)
         layout.addWidget(self.progress)
 
-        # Final Report Section
-        report_group = QGroupBox("Final Report")
-        report_layout = QVBoxLayout(report_group)
-
-        self.final_report_text = QTextEdit()
-        self.final_report_text.setReadOnly(True)
-        self.final_report_text.setPlaceholderText("Final update report will appear here after completion...")
-        self.final_report_text.setMaximumHeight(150)
-        report_layout.addWidget(self.final_report_text)
-
-        layout.addWidget(report_group)
+    # (Final Report removed per request)
 
         # Live Logs
         logs_group = QGroupBox("Live Logs")
@@ -958,8 +1106,8 @@ class DataManagementWidget(QFrame):
         self.run_now_btn.setEnabled(False)
         limit = int(self.limit_spin.value() or 0)
 
-        # Clear previous final report
-        self.final_report_text.clear()
+        # Clear previous logs (final report removed)
+        self.log_view.clear()
 
         # spawn a QThread to run the subprocess
         class SubprocRunner(QObject):
@@ -1074,18 +1222,9 @@ class DataManagementWidget(QFrame):
         completion_msg = f"Completed update for {n} tickers"
         self._append_log(completion_msg)
 
-        # Update final report
-        self.final_report_text.setPlainText(f"""📊 Daily Update Report
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Update completed successfully!
-📈 Tickers processed: {n}
-🕐 Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-📁 Data location: data/bronze/daily/
-🔄 Next scheduled run: {self.next_run_label.text().replace('Next run: ', '')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""")
+        # Log a summary to the live logs (Final Report UI was removed)
+        summary = f"📊 Daily Update Report - Completed: {n} tickers at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        self._append_log(summary)
 
         self.stop_btn.setEnabled(False)
         self.run_now_btn.setEnabled(True)
@@ -1636,13 +1775,17 @@ class DataManagementWidget(QFrame):
                     self.refresh_cache_list()
                 else:
                     QMessageBox.warning(self, "Not Found", f"Cache '{cache_name}' not found")
-                    
+
             except Exception as e:
                 QMessageBox.critical(self, "Delete Failed", f"Failed to delete cache: {str(e)}")
 
 
+# DataManagementWidget removed — now handled by top-level DataWidget
 class MLWidget(QWidget):
     """Main ML widget with tabs for different ML functions"""
+    # Signal emitted when user clicks the small Ask-AI icon in the One Symbol table.
+    # Parameters: symbol (str), payload (dict) - payload contains compact context (price_targets, per_horizon, overall_signal)
+    ask_ai_clicked = pyqtSignal(str, dict)
     
     def __init__(self):
         super().__init__()
@@ -1678,30 +1821,74 @@ class MLWidget(QWidget):
         # Setup UI
         self.setup_ui()
         
-        # Now that data_management_widget exists, update pipeline worker
-        self.pipeline_worker.data_widget = self.data_management_widget
+    # No ML-level data_management_widget in this refactor; pipeline worker has no data_widget reference
         self.pipeline_worker.ml_widget = self
+        # Connect Ask-AI signal to handler that will open a prompt dialog and request AI response
+        try:
+            self.ask_ai_clicked.connect(self._on_ask_ai)
+        except Exception:
+            pass
         
         self.logger.info("ML widget initialized")
+
+    # --- Helpers to access data controls safely (ML-level data tab removed) ---
+    def _get_symbols_from_data_widget(self):
+        """Return list of tickers from the ML-level data widget if present, else empty list."""
+        try:
+            if hasattr(self, 'data_management_widget') and getattr(self, 'data_management_widget'):
+                txt = self.data_management_widget.symbols_input.toPlainText().strip()
+                if txt:
+                    return [s.strip().upper() for s in txt.split(',') if s.strip()]
+        except Exception:
+            pass
+        return []
+
+    def _get_selected_cache_from_data_widget(self):
+        """Return selected cache name from ML-level data widget if present, else None."""
+        try:
+            if hasattr(self, 'data_management_widget') and getattr(self, 'data_management_widget'):
+                combo = getattr(self.data_management_widget, 'training_cache_combo', None)
+                if combo is not None:
+                    return combo.currentData()
+        except Exception:
+            pass
+        return None
     
     def create_pipeline_tab(self):
-        """Create the pipeline tab widget"""
+        """Create the pipeline tab widget with responsive scroll area"""
+        from PyQt6.QtWidgets import QScrollArea
+        
+        # Create scroll area for small screens
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
         tab_widget = QWidget()
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)  # Reduced spacing
+        layout.setSpacing(5)  # Reduced spacing for small screens
 
         # Titles row - align configuration and progress titles
         titles_layout = QHBoxLayout()
+        # Reduce spacing and margins for a more compact header row
+        titles_layout.setContentsMargins(0, 2, 0, 2)
+        titles_layout.setSpacing(2)
+        
+        # Responsive font sizes - get QApplication from the import at top of file
+        from PyQt6.QtWidgets import QApplication as QtApp
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        title_font_size = 8 if screen_height <= 768 else 10
         
         config_title = QLabel("Pipeline Configuration")
-        config_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        config_title.setFont(QFont("Arial", title_font_size, QFont.Weight.Bold))
         titles_layout.addWidget(config_title)
         
         titles_layout.addStretch()
         
         progress_title = QLabel("Pipeline Progress")
-        progress_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        progress_title.setFont(QFont("Arial", title_font_size, QFont.Weight.Bold))
         titles_layout.addWidget(progress_title)
         
         layout.addLayout(titles_layout)
@@ -1711,7 +1898,8 @@ class MLWidget(QWidget):
         config_frame.setFrameStyle(QFrame.Shape.Box)
         
         config_layout = QVBoxLayout(config_frame)
-        config_layout.setContentsMargins(10, 5, 10, 10)  # Reduced top margin
+        # Pull the config content up to reduce vertical gap under the titles
+        config_layout.setContentsMargins(6, 2, 6, 6)
         
         # Use form layout so labels are directly adjacent to controls
         from PyQt6.QtWidgets import QFormLayout
@@ -1720,34 +1908,64 @@ class MLWidget(QWidget):
         form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # Controls
+        # Put Holdout and Step on the same horizontal row
         self.holdout_spin = QSpinBox()
         self.holdout_spin.setRange(5, 250)
         self.holdout_spin.setValue(30)
         self.holdout_spin.setFixedWidth(80)
-        self.holdout_spin.setToolTip("Number of days to use for model performance testing.\nMore days = more accurate testing, but longer training time")
-        form.addRow(QLabel("Holdout days:"), self.holdout_spin)
+        self.holdout_spin.setToolTip(
+            "Number of days to use for model performance testing.\nMore days = more accurate testing, but longer training time"
+        )
 
         self.step_spin = QSpinBox()
         self.step_spin.setRange(1, 60)
         self.step_spin.setValue(5)
         self.step_spin.setFixedWidth(70)
-        self.step_spin.setToolTip("Time interval between each training point.\n1 = daily training, 5 = training every 5 days.\nMore frequent = more training points, but longer runtime")
-        form.addRow(QLabel("Step days:"), self.step_spin)
+        self.step_spin.setToolTip(
+            "Time interval between each training point.\n1 = daily training, 5 = training every 5 days.\nMore frequent = more training points, but longer runtime"
+        )
 
+        row1 = QWidget()
+        row1_h = QHBoxLayout(row1)
+        row1_h.setContentsMargins(0, 0, 0, 0)
+        row1_h.setSpacing(8)
+        row1_h.addWidget(QLabel("Holdout days:"))
+        row1_h.addWidget(self.holdout_spin)
+        row1_h.addSpacing(12)
+        row1_h.addWidget(QLabel("Step days:"))
+        row1_h.addWidget(self.step_spin)
+        row1_h.addStretch()
+        form.addRow(row1)
+
+        # Put Window and Lookback on the same horizontal row
         self.window_combo = QComboBox()
         self.window_combo.addItems(["expanding", "rolling"])
         self.window_combo.setCurrentText("expanding")
         self.window_combo.setFixedWidth(110)
-        self.window_combo.setToolTip("Training window expansion method:\n• expanding = all data up to current point\n• rolling = fixed window (requires lookback setting)")
-        form.addRow(QLabel("Window:"), self.window_combo)
+        self.window_combo.setToolTip(
+            "Training window expansion method:\n• expanding = all data up to current point\n• rolling = fixed window (requires lookback setting)"
+        )
 
         self.lookback_spin = QSpinBox()
         self.lookback_spin.setRange(50, 2000)
         self.lookback_spin.setValue(500)
         self.lookback_spin.setEnabled(False)
         self.lookback_spin.setFixedWidth(90)
-        self.lookback_spin.setToolTip("Number of days to use for training when window is rolling.\nOnly active when rolling window is selected")
-        form.addRow(QLabel("Lookback:"), self.lookback_spin)
+        self.lookback_spin.setToolTip(
+            "Number of days to use for training when window is rolling.\nOnly active when rolling window is selected"
+        )
+
+        row2 = QWidget()
+        row2_h = QHBoxLayout(row2)
+        row2_h.setContentsMargins(0, 0, 0, 0)
+        row2_h.setSpacing(8)
+        row2_h.addWidget(QLabel("Window:"))
+        row2_h.addWidget(self.window_combo)
+        row2_h.addSpacing(12)
+        row2_h.addWidget(QLabel("Lookback:"))
+        row2_h.addWidget(self.lookback_spin)
+        row2_h.addStretch()
+        form.addRow(row2)
 
         self.window_combo.currentTextChanged.connect(self._on_window_changed)
 
@@ -1797,6 +2015,111 @@ class MLWidget(QWidget):
 
         config_layout.addLayout(form)
 
+        # One Symbol Prediction small results table (placed directly under Pipeline Configuration)
+        one_symbol_frame = QFrame()
+        one_symbol_frame.setFrameStyle(QFrame.Shape.Box)
+        one_symbol_layout = QVBoxLayout(one_symbol_frame)
+        # Make title tighter to the table and reduce spacing so the compact table is fully visible
+        # Minimal top margin to push title upward, small bottom margin to reduce gap to the table
+        one_symbol_layout.setContentsMargins(4, 0, 4, 2)
+        one_symbol_layout.setSpacing(1)
+
+        one_title = QLabel("One Symbol Prediction")
+        # Even smaller title font and slimmer weight so it takes less vertical space
+        one_title.setFont(QFont("Arial", 9, QFont.Weight.DemiBold))
+        # Reduce internal margins for the title label and set fixed height to keep it compact
+        one_title.setContentsMargins(0, 0, 0, 1)
+        try:
+            one_title.setFixedHeight(18)
+        except Exception:
+            pass
+        one_symbol_layout.addWidget(one_title)
+
+    # Small read-only table showing a single-symbol summary (Symbol, Price, Signal, Conf, Day1, Day5, Day10) + Ask AI
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+        from PyQt6.QtGui import QColor
+        self.one_symbol_table = QTableWidget()
+        # Add a small Ask-AI column at the end (compact icon/button) and a Current Price column
+        self.one_symbol_table.setColumnCount(8)
+        self.one_symbol_table.setHorizontalHeaderLabels(["Symbol", "Price", "Signal", "Conf", "Day1", "Day5", "Day10", "7Days AI Prediction"])
+        self.one_symbol_table.setRowCount(1)
+        # Initialize empty cells
+        for c in range(8):
+            item = QTableWidgetItem("-")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.one_symbol_table.setItem(0, c, item)
+        # Make the table more compact: smaller font, tighter cell padding, smaller header/row heights
+        self.one_symbol_table.setFont(QFont("Segoe UI", 7))
+        # Apply stylesheet to reduce padding for both header sections and items
+        self.one_symbol_table.setStyleSheet(
+            "QTableWidget::item{ padding:1px 4px; }"
+            "QHeaderView::section{ padding:1px 4px; font-size:9px; }"
+        )
+        # Adjust column sizing so the long header for the AI column is fully visible
+        try:
+            from PyQt6.QtWidgets import QHeaderView
+            header = self.one_symbol_table.horizontalHeader()
+            # Small content-based sizes for first columns
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            # Day columns keep reasonable fixed width
+            self.one_symbol_table.setColumnWidth(4, 70)
+            self.one_symbol_table.setColumnWidth(5, 70)
+            self.one_symbol_table.setColumnWidth(6, 70)
+            # Make the AI column stretch and give it a comfortable minimum width
+            header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+            self.one_symbol_table.setColumnWidth(7, 220)
+        except Exception:
+            pass
+        # Hide the vertical header (row numbers) to save space
+        try:
+            self.one_symbol_table.verticalHeader().setVisible(False)
+        except Exception:
+            pass
+
+        # Slightly smaller maximum height and row height to keep the UI compact
+        # Header + row should fit within ~42-46 pixels
+        self.one_symbol_table.setMaximumHeight(46)
+        try:
+            self.one_symbol_table.horizontalHeader().setFixedHeight(18)
+            self.one_symbol_table.setRowHeight(0, 18)
+        except Exception:
+            pass
+
+        # Set reasonable compact column widths so table displays without horizontal scroll
+        try:
+            self.one_symbol_table.setColumnWidth(0, 60)   # Symbol
+            self.one_symbol_table.setColumnWidth(1, 70)   # Price
+            self.one_symbol_table.setColumnWidth(2, 70)   # Signal
+            self.one_symbol_table.setColumnWidth(3, 50)   # Conf
+            self.one_symbol_table.setColumnWidth(4, 60)   # Day1
+            self.one_symbol_table.setColumnWidth(5, 60)   # Day5
+            self.one_symbol_table.setColumnWidth(6, 60)   # Day10
+            self.one_symbol_table.setColumnWidth(7, 34)   # Ask (small icon button)
+        except Exception:
+            pass
+        one_symbol_layout.addWidget(self.one_symbol_table)
+        # Auto AI checkbox: when enabled, the app will automatically ask the AI after a single-stock run
+        try:
+            self.auto_ai_checkbox = QCheckBox("Auto AI (ask after training)")
+            # Default to enabled so single-symbol runs automatically ask the AI
+            self.auto_ai_checkbox.setChecked(True)
+            self.auto_ai_checkbox.setToolTip("If checked, the app will automatically send the compact prompt to the AI after a single-stock pipeline run and display the response in the right-most cell.")
+            # Keep it visually small and left-aligned under the compact table
+            cb_row = QWidget()
+            cb_row_h = QHBoxLayout(cb_row)
+            cb_row_h.setContentsMargins(0, 0, 0, 0)
+            cb_row_h.setSpacing(2)
+            cb_row_h.addWidget(self.auto_ai_checkbox)
+            cb_row_h.addStretch()
+            one_symbol_layout.addWidget(cb_row)
+        except Exception:
+            # Best-effort: if checkboxes aren't available, skip
+            pass
+        config_layout.addWidget(one_symbol_frame)
+
         # Pipeline Progress
         progress_frame = QFrame()
         progress_frame.setFrameStyle(QFrame.Shape.Box)
@@ -1841,7 +2164,10 @@ class MLWidget(QWidget):
         # Step counter label
         self.pipeline_step_label = QLabel("Steps: 0/0")
         self.pipeline_step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pipeline_step_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+        
+        # Responsive font size for step counter
+        step_font_size = 7 if screen_height <= 768 else 9
+        self.pipeline_step_label.setFont(QFont("Arial", step_font_size, QFont.Weight.Bold))
         progress_layout.addWidget(self.pipeline_step_label)
 
         # Progress bar for pipeline
@@ -1855,9 +2181,25 @@ class MLWidget(QWidget):
         progress_layout.addWidget(progress_steps_label)
         
         self.pipeline_progress_details = QTextEdit()
-        self.pipeline_progress_details.setMinimumHeight(300)  # Increased height
+        # Responsive heights based on screen size
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens (laptop 15")
+            self.pipeline_progress_details.setMinimumHeight(200)
+            self.pipeline_progress_details.setMaximumHeight(250)
+        elif screen_height <= 1080:  # Medium screens
+            self.pipeline_progress_details.setMinimumHeight(250)
+            self.pipeline_progress_details.setMaximumHeight(300)
+        else:  # Large screens
+            self.pipeline_progress_details.setMinimumHeight(300)
+            self.pipeline_progress_details.setMaximumHeight(400)
         self.pipeline_progress_details.setReadOnly(True)
         self.pipeline_progress_details.setPlainText("Ready to run pipeline...")
+        # Improve scroll behavior
+        self.pipeline_progress_details.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.pipeline_progress_details.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.pipeline_progress_details.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         progress_layout.addWidget(self.pipeline_progress_details)
 
         # Create horizontal layout for configuration and progress frames
@@ -1866,7 +2208,17 @@ class MLWidget(QWidget):
         main_h_layout.addWidget(progress_frame)
         layout.addLayout(main_h_layout)
         
-        return tab_widget
+        # Set up scroll area for small screens
+        scroll_area.setWidget(tab_widget)
+        
+        # Check screen size and return appropriate widget
+        screen = QtApp.primaryScreen()
+        screen_height = screen.availableGeometry().height()
+        
+        if screen_height <= 768:  # Small screens need scroll
+            return scroll_area
+        else:
+            return tab_widget
     
     def _on_window_changed(self, text: str):
         """Handle window combo box changes to enable/disable lookback field"""
@@ -1881,7 +2233,7 @@ class MLWidget(QWidget):
         # Title
         title = QLabel("Machine Learning Training Center")
         title_font = QFont()
-        title_font.setPointSize(18)
+        title_font.setPointSize(16)
         title_font.setBold(True)
         title.setFont(title_font)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1890,9 +2242,7 @@ class MLWidget(QWidget):
         # Create tab widget
         self.tab_widget = QTabWidget()
         
-        # Data Management Tab
-        self.data_management_widget = DataManagementWidget()
-        self.tab_widget.addTab(self.data_management_widget, "💾 Data")
+    # Data Management Tab removed from ML widget (moved to top-level DATA tab)
         
         # Pipeline Tab
         self.pipeline_widget = self.create_pipeline_tab()
@@ -1912,51 +2262,31 @@ class MLWidget(QWidget):
     
     def create_diagnostics_tab(self):
         """Create diagnostics tab for system checks"""
+        # Keep a minimal diagnostics tab: only title and an empty results area placeholder.
         tab_widget = QWidget()
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
-        
-        # Title
+
+        # Title (keep)
         title = QLabel("System Diagnostics & Health Checks")
         title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
-        
-        # Description
-        desc = QLabel("Run basic system checks to verify core components are working.\n\nFor comprehensive data reports, use the DATA tab → Report sub-tab.")
+
+        # Minimal placeholder description (kept for context)
+        desc = QLabel("Diagnostics: basic checks available. For full reports use the DATA → Report tab.")
         desc.setWordWrap(True)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
-        
-        # Control buttons
-        buttons_layout = QHBoxLayout()
-        
-        self.run_diagnostics_btn = QPushButton("🔍 Run System Check")
-        self.run_diagnostics_btn.clicked.connect(self.run_system_check)
-        self.run_diagnostics_btn.setFixedWidth(200)
-        buttons_layout.addWidget(self.run_diagnostics_btn)
-        
-        buttons_layout.addStretch()
-        layout.addLayout(buttons_layout)
-        
-        # Progress
-        self.diagnostics_progress = QProgressBar()
-        self.diagnostics_progress.setVisible(False)
-        layout.addWidget(self.diagnostics_progress)
-        
-        # Results area
-        results_group = QGroupBox("Check Results")
-        results_layout = QVBoxLayout(results_group)
-        
+
+        # Simple read-only results area (empty)
         self.diagnostics_results = QTextEdit()
         self.diagnostics_results.setReadOnly(True)
-        self.diagnostics_results.setPlaceholderText("System check results will appear here...")
-        self.diagnostics_results.setMinimumHeight(400)
-        results_layout.addWidget(self.diagnostics_results)
-        
-        layout.addWidget(results_group)
-        
+        self.diagnostics_results.setPlaceholderText("Diagnostics results will appear here (cleared to header only)...")
+        self.diagnostics_results.setMinimumHeight(120)
+        layout.addWidget(self.diagnostics_results)
+
         return tab_widget
     
     # REMOVED: Pipeline configuration and progress moved to dedicated Pipeline tab
@@ -1973,9 +2303,8 @@ class MLWidget(QWidget):
                 tickers = [single_stock]
                 self.performance_widget.add_log_entry(f"Running pipeline on single stock: {single_stock}")
             else:
-                # Collect tickers from Data tab
-                symbols_text = self.data_management_widget.symbols_input.toPlainText().strip()
-                tickers = [s.strip().upper() for s in symbols_text.split(',') if s.strip()]
+                # Collect tickers from Data tab (safe helper)
+                tickers = self._get_symbols_from_data_widget()
                 # If none provided: use entire available bronze dataset
                 if not tickers:
                     # Leave tickers empty so worker loads all available bronze Parquet files
@@ -2000,7 +2329,7 @@ class MLWidget(QWidget):
                 "use_sentiment": self.use_sentiment_data.isChecked(),
                 "use_parallel": self.use_parallel_processing.isChecked(),
                 # cache selection
-                "selected_cache": self.data_management_widget.training_cache_combo.currentData(),
+                "selected_cache": self._get_selected_cache_from_data_widget(),
             }
 
             # UI state
@@ -2012,11 +2341,15 @@ class MLWidget(QWidget):
             # REMOVED: progress_bar and status_label removed as training buttons removed
             self.performance_widget.training_log.clear()
             
-            # Initialize step counter
+            # Initialize step counter - CORRECTED to actual implementation
             self.pipeline_step_counter = 0
-            # Calculate total steps: 1 (init) + 3 horizons * (1 setup + 1 data + 1 features + 5 training + 1 complete) + 2 (save/export) = 1 + 3*9 + 2 = 30
-            self.pipeline_total_steps = 1 + 3 * (1 + 1 + 1 + 5 + 1) + 2  # = 30 steps
+            # Actual steps that execute "completed":
+            # Initialize Config (1) + Loading Data (1) + Feature Building per-horizon (3)
+            # + Horizon Training completions (3) + Saving Predictions (1) + Exporting Signals (1) = 13 steps TOTAL
+            # Keep this in sync with add_pipeline_step calls in PipelineRunWorker.run()
+            self.pipeline_total_steps = 13
             self.pipeline_step_label.setText(f"Steps: 0/{self.pipeline_total_steps}")
+            self.performance_widget.add_log_entry(f"Pipeline initialized: {self.pipeline_total_steps} total steps")
             
             # Clear pipeline steps in data tab
             self.clear_pipeline_steps()
@@ -2034,25 +2367,152 @@ class MLWidget(QWidget):
 
     def on_pipeline_completed(self, summary: dict):
         """Handle completion of pipeline run."""
-        # Reset UI state
+        # Reset UI state and ensure step counter shows completion
         self.run_pipeline_btn.setEnabled(True)
         self.stop_pipeline_btn.setEnabled(False)
         self.pipeline_status_label.setText("Pipeline completed successfully")
+        
+        # Force completion - make sure step counter reaches 100%
+        if self.pipeline_step_counter < self.pipeline_total_steps:
+            self.pipeline_step_counter = self.pipeline_total_steps
+            self.pipeline_step_label.setText(f"Steps: {self.pipeline_step_counter}/{self.pipeline_total_steps}")
+            self.pipeline_progress_bar.setValue(100)
+        
         self.pipeline_progress_bar.setVisible(False)
+        
+        # Add completion notification
+        self.performance_widget.add_log_entry("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
+        self.performance_widget.add_log_entry("="*50)
+        
         # Render compact metrics to table
         self.performance_widget.update_metrics(summary)
         
         # Check if this was a single stock run and generate special report
         single_stock = self.single_stock_input.text().strip().upper()
         if single_stock:
-            self._generate_single_stock_report(single_stock)
+            # Always try to reconstruct compact payload from persisted preds parquet files.
+            # This ensures the One Symbol table is populated even if the worker's in-memory
+            # compact payload is incomplete.
+            reconstructed = None
+            try:
+                import pandas as _pd
+                from pathlib import Path as _Path
+                ticker = single_stock.upper()
+                preds_map = {}
+                for h in [1, 5, 10]:
+                    fp = _Path(f"data/silver/preds/preds_h{h}.parquet")
+                    if fp.exists():
+                        try:
+                            df = _pd.read_parquet(fp)
+                            if 'ticker' in df.columns:
+                                df_t = df[df['ticker'].str.upper() == ticker]
+                            else:
+                                df_t = df
+                            if not df_t.empty:
+                                latest = df_t.sort_values('date').iloc[-1]
+                                preds_map[h] = latest
+                        except Exception:
+                            pass
+
+                if preds_map:
+                    price_targets = {}
+                    per_horizon = {}
+                    signals = []
+                    for h in [1, 5, 10]:
+                        if h in preds_map:
+                            r = preds_map[h]
+                            pred_lbl = str(r.get(f'y_h{h}_pred', r.get('y_pred', 'HOLD'))).upper()
+                            conf = float(r.get('confidence', 0.0)) if r.get('confidence', None) is not None else 0.0
+                            pt = float(r.get('price_target', r.get('adj_close', r.get('close', 0.0))))
+                            model_name = r.get('model', None)
+                            price_targets[int(h)] = pt
+                            per_horizon[int(h)] = {'signal': pred_lbl, 'confidence': conf, 'model': model_name}
+                            signals.append((h, pred_lbl, conf))
+
+                    overall = '-'
+                    if signals:
+                        score_map = {'BUY': 0.0, 'SELL': 0.0, 'HOLD': 0.0}
+                        for (_h, lbl, conf) in signals:
+                            if lbl == 'UP':
+                                score_map['BUY'] += conf
+                            elif lbl == 'DOWN':
+                                score_map['SELL'] += conf
+                            else:
+                                score_map['HOLD'] += conf
+                        overall = max(score_map.keys(), key=lambda k: score_map[k])
+
+                    price_targets['meta'] = {}
+                    for h, info in per_horizon.items():
+                        try:
+                            src_date = preds_map[h].get('date', None)
+                            try:
+                                src_date_str = src_date.isoformat() if hasattr(src_date, 'isoformat') else str(src_date)
+                            except Exception:
+                                src_date_str = str(src_date)
+                        except Exception:
+                            src_date_str = None
+                        price_targets['meta'][int(h)] = {
+                            'confidence': info.get('confidence', 0.0),
+                            'model': info.get('model', None),
+                            'date': src_date_str,
+                        }
+
+                    reconstructed = {
+                        'symbol': ticker,
+                        'overall_signal': overall,
+                        'price_targets': price_targets,
+                        'per_horizon': {int(k): {'signal': v.get('signal'), 'confidence': v.get('confidence')} for k, v in per_horizon.items()}
+                    }
+            except Exception:
+                reconstructed = None
+
+            # Use reconstructed payload if available; otherwise fall back to worker compact_table
+            compact = summary.get('compact_table') if isinstance(summary, dict) else None
+            final_compact = reconstructed if reconstructed is not None else compact
+            if final_compact:
+                try:
+                    try:
+                        self.performance_widget.add_log_entry(
+                            f"Using compact payload for UI (source: {'reconstructed' if reconstructed else 'worker'})"
+                        )
+                    except Exception:
+                        pass
+                    # Update the compact table display
+                    self._update_one_symbol_table(
+                        final_compact.get('symbol', single_stock),
+                        final_compact.get('overall_signal', '-'),
+                        final_compact.get('price_targets', {}),
+                    )
+                    try:
+                        if getattr(self, 'auto_ai_checkbox', None) and self.auto_ai_checkbox.isChecked():
+                            try:
+                                self.performance_widget.add_log_entry(f"Auto AI enabled - requesting AI for {single_stock}")
+                            except Exception:
+                                pass
+                            # Build prompt now so we can indicate to the user that the prompt was sent
+                            try:
+                                prompt_text = self._build_generic_prompt(single_stock, final_compact)
+                            except Exception:
+                                prompt_text = self._build_generic_prompt(single_stock, {})
+                            # Show a small sending indicator in the AI cell with tooltip containing timestamp and prompt preview
+                            try:
+                                self._set_ai_sending_state(prompt_text, single_stock)
+                            except Exception:
+                                pass
+                            # Start background AI request, pass prompt_text so worker uses the exact prompt we showed
+                            self._auto_ask_ai_async(single_stock, final_compact, prompt_text)
+                    except Exception:
+                        pass
+                except Exception:
+                    self._generate_single_stock_report(single_stock)
+            else:
+                self._generate_single_stock_report(single_stock)
         
         # Auto-refresh metrics/preds view based on last run
         try:
             self.performance_widget.load_metrics_csv()
             # If single ticker was requested, filter preds preview to that ticker automatically
-            symbols_text = self.data_management_widget.symbols_input.toPlainText().strip()
-            tickers = [s.strip().upper() for s in symbols_text.split(',') if s.strip()]
+            tickers = self._get_symbols_from_data_widget()
             self.performance_widget.load_preds_parquet(filter_tickers=tickers if tickers else None)
         except Exception:
             pass
@@ -2105,6 +2565,7 @@ class MLWidget(QWidget):
             
             # Current price (from latest available data)
             latest_data = None
+            current_price = 0.0  # Initialize with default value
             for h in horizons:
                 if h in preds_data:
                     latest_data = preds_data[h]
@@ -2113,6 +2574,9 @@ class MLWidget(QWidget):
             if latest_data is not None:
                 current_price = float(latest_data.get('adj_close', latest_data.get('close', 0)))
                 report_lines.append(f"💲 Current Price: ${current_price:.2f}")
+                report_lines.append("")
+            else:
+                report_lines.append("⚠️ No current price data available")
                 report_lines.append("")
             
             # Trading signals and price targets
@@ -2124,7 +2588,7 @@ class MLWidget(QWidget):
                     pred = preds_data[h]
                     signal = str(pred.get('y_pred', 'HOLD')).upper()
                     confidence = float(pred.get('confidence', 0.5))
-                    price_target = float(pred.get('price_target', current_price if latest_data else 0))
+                    price_target = float(pred.get('price_target', current_price))
                     
                     signals.append((h, signal, confidence))
                     price_targets[h] = price_target
@@ -2144,15 +2608,23 @@ class MLWidget(QWidget):
             overall_signal = max(signal_scores.keys(), key=lambda k: signal_scores[k])
             overall_confidence = signal_scores[overall_signal] / len(signals) if signals else 0
             
-            # Display overall recommendation
+            # Display overall recommendation with enhanced formatting
             signal_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
-            report_lines.append(f"📊 OVERALL RECOMMENDATION: {signal_emoji.get(overall_signal, '⚪')} {overall_signal}")
-            report_lines.append(f"🎯 Confidence: {overall_confidence:.1%}")
+            signal_desc = {"BUY": "BUY (Expected to go UP)", "SELL": "SELL (Expected to go DOWN)", "HOLD": "HOLD (Sideways movement)"}
+            
+            report_lines.append(f"📊 OVERALL RECOMMENDATION:")
+            report_lines.append(f"    {signal_emoji.get(overall_signal, '⚪')} {overall_signal} - {signal_desc.get(overall_signal, 'No clear direction')}")
+            report_lines.append(f"    🎯 Confidence Level: {overall_confidence:.1%}")
+            
+            # Risk assessment
+            risk_level = "LOW" if overall_confidence > 0.7 else "MEDIUM" if overall_confidence > 0.5 else "HIGH"
+            risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
+            report_lines.append(f"    ⚠️ Risk Assessment: {risk_emoji.get(risk_level)} {risk_level} RISK")
             report_lines.append("")
             
-            # Detailed predictions by horizon
-            report_lines.append("📈 PRICE TARGETS BY HORIZON:")
-            report_lines.append("-" * 40)
+            # Detailed predictions by horizon with enhanced formatting
+            report_lines.append("📈 DETAILED PRICE TARGETS & SIGNALS:")
+            report_lines.append("=" * 50)
             
             for h in [1, 5, 10]:
                 if h in price_targets:
@@ -2162,7 +2634,21 @@ class MLWidget(QWidget):
                         change_symbol = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡️"
                         signal_info = next((s for s in signals if s[0] == h), (h, 'HOLD', 0.5))
                         
-                        report_lines.append(f"{h:2d} Days: ${target:6.2f} ({change_pct:+5.1f}%) {change_symbol} [{signal_info[1]}] conf:{signal_info[2]:.1%}")
+                        # Enhanced signal mapping
+                        signal_text = signal_info[1]
+                        if signal_text == 'UP':
+                            signal_text = 'BUY'
+                        elif signal_text == 'DOWN':
+                            signal_text = 'SELL'
+                        
+                        # Color-coded confidence levels
+                        conf_level = "HIGH" if signal_info[2] > 0.7 else "MED" if signal_info[2] > 0.5 else "LOW"
+                        
+                        report_lines.append(f"📅 {h:2d}-Day Horizon:")
+                        report_lines.append(f"   🎯 Target Price: ${target:7.2f}")
+                        report_lines.append(f"   📊 Expected Change: {change_pct:+6.1f}% {change_symbol}")
+                        report_lines.append(f"   🔔 Signal: {signal_text} (Confidence: {signal_info[2]:.1%} - {conf_level})")
+                        report_lines.append("")
             
             report_lines.append("")
             report_lines.append("=" * 60)
@@ -2181,6 +2667,15 @@ class MLWidget(QWidget):
                 self.performance_widget.add_log_entry(line)
             
             self.performance_widget.add_log_entry(f"📄 Full report saved to: {report_file}")
+            # Also update the compact One Symbol Prediction table (Symbol, Signal, Day1, Day5, Day10)
+            try:
+                # Build compact values
+                day_values = {h: price_targets.get(h, 0.0) for h in [1, 5, 10]}
+                # Map overall_signal to UI-friendly value
+                ui_signal = overall_signal
+                self._update_one_symbol_table(ticker, ui_signal, day_values)
+            except Exception:
+                pass
             
             # Show popup with summary
             from PyQt6.QtWidgets import QMessageBox
@@ -2205,6 +2700,199 @@ Full report saved to data/silver/reports/"""
             import traceback
             self.logger.error(f"Single stock report error: {traceback.format_exc()}")
 
+    def _update_one_symbol_table(self, symbol: str, overall_signal: str, price_targets: dict):
+        """Update the small One Symbol Prediction table with a single row.
+
+        price_targets should be a dict like {1: price1, 5: price5, 10: price10}
+        """
+        try:
+            from PyQt6.QtGui import QColor
+
+            # Normalize values
+            sig = overall_signal if overall_signal else "-"
+            p1 = price_targets.get(1, 0.0)
+            p5 = price_targets.get(5, 0.0)
+            p10 = price_targets.get(10, 0.0)
+            # Compute confidence: prefer compact payload per_horizon if present, else check price_targets.meta
+            conf_val = 0.0
+            if isinstance(price_targets, dict):
+                # If worker provided per-horizon meta inside price_targets['meta'], use it
+                meta = price_targets.get('meta', {}) if isinstance(price_targets.get('meta', {}), dict) else {}
+                confidences = []
+                for h in (1, 5, 10):
+                    ph = None
+                    # first look in meta
+                    if h in meta and isinstance(meta[h], dict) and meta[h].get('confidence') is not None:
+                        try:
+                            ph = float(meta[h].get('confidence', 0.0))
+                        except Exception:
+                            ph = 0.0
+                    # fallback: price_targets might include per_horizon-like structure
+                    if ph is None and isinstance(price_targets.get('per_horizon', {}), dict):
+                        try:
+                            ph = float(price_targets['per_horizon'].get(h, {}).get('confidence', 0.0))
+                        except Exception:
+                            ph = 0.0
+                    if ph is not None:
+                        confidences.append(ph)
+                if confidences:
+                    conf_val = sum(confidences) / len(confidences)
+
+            # Helper to create read-only item
+            def mk_item(text: str):
+                it = QTableWidgetItem(text)
+                it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                return it
+
+            # Symbol
+            self.one_symbol_table.setItem(0, 0, mk_item(symbol))
+
+            # Current price: attempt to read last close from parquet for this ticker
+            try:
+                cur_price = None
+                from pathlib import Path
+                p = Path(f"data/bronze/daily/{symbol}.parquet")
+                if not p.exists():
+                    # try lowercase
+                    p = Path(f"data/bronze/daily/{symbol.lower()}.parquet")
+                if p.exists():
+                    import pandas as _pd
+                    dfp = _pd.read_parquet(p)
+                    if 'adj_close' in dfp.columns:
+                        cur_price = float(dfp['adj_close'].dropna().iloc[-1])
+                    elif 'close' in dfp.columns:
+                        cur_price = float(dfp['close'].dropna().iloc[-1])
+                if cur_price is None:
+                    price_item = mk_item("N/A")
+                else:
+                    price_item = mk_item(f"${cur_price:.2f}")
+                    # add tooltip showing the date of the current price (last row)
+                    try:
+                        last_date = None
+                        if 'date' in dfp.columns:
+                            last_date = dfp['date'].dropna().iloc[-1]
+                            # format
+                            try:
+                                last_date_str = last_date.isoformat() if hasattr(last_date, 'isoformat') else str(last_date)
+                            except Exception:
+                                last_date_str = str(last_date)
+                            price_item.setToolTip(f"Price as of: {last_date_str}")
+                    except Exception:
+                        pass
+                self.one_symbol_table.setItem(0, 1, price_item)
+            except Exception:
+                try:
+                    self.one_symbol_table.setItem(0, 1, mk_item("N/A"))
+                except Exception:
+                    pass
+
+            # Signal with color-coding and readable text
+            sig_text = str(sig).upper()
+            if sig_text in ("BUY", "UP"):
+                display_sig = "🟢 BUY"
+                color = QColor(200, 255, 200)
+            elif sig_text in ("SELL", "DOWN"):
+                display_sig = "🔴 SELL"
+                color = QColor(255, 200, 200)
+            else:
+                display_sig = "🟡 HOLD"
+                color = QColor(255, 255, 200)
+
+            sig_item = mk_item(display_sig)
+            sig_item.setBackground(color)
+            # Signal column moved to index 2
+            self.one_symbol_table.setItem(0, 2, sig_item)
+
+            # Confidence cell (show percentage)
+            try:
+                conf_display = f"{float(conf_val):.1%}" if conf_val is not None else "-"
+            except Exception:
+                conf_display = str(conf_val)
+            conf_item = mk_item(conf_display)
+            # color confidence gradient: green>0.7, yellow>0.5
+            try:
+                cv = float(conf_val)
+                if cv > 0.7:
+                    conf_item.setBackground(QColor(200, 255, 200))
+                elif cv > 0.5:
+                    conf_item.setBackground(QColor(255, 255, 200))
+                else:
+                    conf_item.setBackground(QColor(255, 230, 230))
+            except Exception:
+                pass
+            # Confidence now at index 3
+            self.one_symbol_table.setItem(0, 3, conf_item)
+
+            # Day1, Day5, Day10 as price strings
+            # Add tooltips on day cells showing model and confidence when available
+            def day_item(h, val):
+                text = f"{val:.2f}" if isinstance(val, (int, float)) else str(val)
+                it = mk_item(text)
+                # Build tooltip from per-horizon meta if present
+                tip_parts = []
+                # Try compact per_horizon structure
+                ph = None
+                if isinstance(price_targets, dict):
+                    meta = price_targets.get('meta', {}) if isinstance(price_targets.get('meta', {}), dict) else {}
+                    if h in meta:
+                        mm = meta[h]
+                        mname = mm.get('model') if isinstance(mm.get('model', None), str) else None
+                        mconf = mm.get('confidence', None)
+                        if mname:
+                            tip_parts.append(f"Model: {mname}")
+                        if mconf is not None:
+                            try:
+                                tip_parts.append(f"Confidence: {float(mconf):.1%}")
+                            except Exception:
+                                tip_parts.append(f"Confidence: {mconf}")
+                        # include date if present
+                        mdate = mm.get('date', None)
+                        if mdate:
+                            tip_parts.append(f"Source date: {mdate}")
+                # Also check compact per_horizon key if present
+                if isinstance(price_targets.get('per_horizon', {}), dict) and price_targets.get('per_horizon', {}).get(h):
+                    ph2 = price_targets['per_horizon'][h]
+                    if isinstance(ph2, dict):
+                        if 'model' in ph2 and ph2['model']:
+                            tip_parts.append(f"Model: {ph2['model']}")
+                        if 'confidence' in ph2 and ph2['confidence'] is not None:
+                            try:
+                                tip_parts.append(f"Confidence: {float(ph2['confidence']):.1%}")
+                            except Exception:
+                                tip_parts.append(f"Confidence: {ph2['confidence']}")
+
+                if tip_parts:
+                    it.setToolTip('\n'.join(tip_parts))
+                return it
+
+            # Day1/5/10 shifted right by one due to price column
+            self.one_symbol_table.setItem(0, 4, day_item(1, p1))
+            self.one_symbol_table.setItem(0, 5, day_item(5, p5))
+            self.one_symbol_table.setItem(0, 6, day_item(10, p10))
+
+            # Reserve the right-most cell for AI response. If Auto AI is enabled the response
+            # will be populated automatically after the pipeline completes. Otherwise show '-'.
+            try:
+                ai_item = mk_item("-")
+                ai_item.setToolTip("AI response will appear here if Auto AI is enabled")
+                # Ensure we set the last column (index 7)
+                self.one_symbol_table.setItem(0, 7, ai_item)
+            except Exception:
+                try:
+                    self.one_symbol_table.setItem(0, 7, mk_item("-"))
+                except Exception:
+                    pass
+
+            # Ensure compact row height
+            try:
+                self.one_symbol_table.setRowHeight(0, 26)
+            except Exception:
+                pass
+
+        except Exception:
+            # Fail silently to avoid breaking UI flow
+            return
+
     def stop_pipeline_run(self):
         """Stop the running pipeline."""
         if hasattr(self, 'pipeline_worker') and self.pipeline_worker.is_running:
@@ -2213,14 +2901,309 @@ Full report saved to data/silver/reports/"""
             self.performance_widget.add_log_entry("Pipeline stop requested by user")
         else:
             self.pipeline_status_label.setText("No pipeline running to stop")
+
+    # ---- Ask-AI helpers ----
+    def _build_generic_prompt(self, symbol: str, payload: dict) -> str:
+        """Build the user-specified precise 7-day prediction prompt for the AI.
+
+        The returned prompt is exactly the template requested by the user with the
+        ticker symbol inserted in place of [TICKER].
+        """
+        try:
+            t = str(symbol).upper() if symbol else "TICKER"
+            prompt = (
+                f"You are a  professional financial analyst. Provide a precise 7-day price prediction for {t} by analyzing ALL of the following factors: current financial metrics, recent earnings/guidance, upcoming earnings or corporate events (if any), overall market sentiment (VIX, fear/greed index), sector performance, trading volume patterns, analyst ratings and forecasts, insider trading activity, options flow (including short interest and put/call ratio), technical indicators, macroeconomic events, regulatory or legislative changes, ESG scores, global geopolitical events, patent filings and major product launches, and any relevant news or catalysts. If no significant upcoming events exist, focus on current market dynamics and seasonal effects. Output only the predicted price as a single number in USD."
+            )
+            return prompt
+        except Exception:
+            return f"You are a professional financial analyst. Provide a precise 7-day price prediction for {symbol} and output only the predicted price as a single number in USD."
+
+    def _call_ai(self, prompt: str, symbol: str = None) -> str:
+        """Delegate AI call to AIService so ML widget uses same Perplexity settings as Watchlist.
+
+        Uses AIService.analyze_stock_simple (sync) to preserve behavior and config-driven model/filters.
+        """
+        try:
+            from core.config_manager import ConfigManager
+            from services.ai_service import AIService
+
+            cfg = ConfigManager()
+            svc = AIService(cfg)
+            # analyze_stock_simple returns raw text or None
+            try:
+                text = svc.analyze_stock_simple(prompt, symbol or '', timeout=30)
+                if text is None:
+                    return ""
+                return text
+            except Exception as e:
+                return f"AI call failed: {e}"
+        except Exception as e:
+            return f"AI call failed: {e}"
+
+    def _on_ask_ai(self, symbol: str, payload: dict):
+        """Handler for ask_ai_clicked signal: open dialog with prompt and allow sending to AI."""
+        try:
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QPushButton
+
+            prompt_text = self._build_generic_prompt(symbol, payload)
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Ask AI — {symbol}")
+            v = QVBoxLayout(dlg)
+            lbl = QLabel("Edit prompt (optional):")
+            v.addWidget(lbl)
+            prompt_edit = QTextEdit()
+            prompt_edit.setPlainText(prompt_text)
+            prompt_edit.setMinimumHeight(160)
+            v.addWidget(prompt_edit)
+
+            resp_label = QLabel("AI Response:")
+            v.addWidget(resp_label)
+            resp_view = QTextEdit()
+            resp_view.setReadOnly(True)
+            resp_view.setMinimumHeight(140)
+            v.addWidget(resp_view)
+
+            h = QHBoxLayout()
+            send_btn = QPushButton("Send")
+            close_btn = QPushButton("Close")
+            h.addWidget(send_btn)
+            h.addWidget(close_btn)
+            v.addLayout(h)
+
+            def do_send():
+                send_btn.setEnabled(False)
+                resp_view.setPlainText("(requesting...)")
+                QApplication.processEvents()
+                res = self._call_ai(prompt_edit.toPlainText())
+                resp_view.setPlainText(res)
+                send_btn.setEnabled(True)
+
+            send_btn.clicked.connect(do_send)
+            close_btn.clicked.connect(dlg.accept)
+
+            dlg.exec()
+        except Exception as e:
+            try:
+                self.performance_widget.add_log_entry(f"Ask-AI dialog failed: {e}")
+            except Exception:
+                pass
+
+    def _set_ai_response_cell(self, text: str):
+        """Safely update the AI response cell in the One Symbol table on the main thread."""
+        try:
+            def do_update():
+                try:
+                    item = QTableWidgetItem(text)
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    # Put truncated text if it's long to keep table compact
+                    disp = text if len(text) <= 64 else text[:60] + "..."
+                    item.setText(disp)
+                    item.setToolTip(text)
+                    # Last column index may be 7
+                    self.one_symbol_table.setItem(0, 7, item)
+                except Exception:
+                    pass
+            QTimer.singleShot(0, do_update)
+        except Exception:
+            # Best-effort: try direct set (may fail if called off main thread)
+            try:
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                disp = text if len(text) <= 64 else text[:60] + "..."
+                item.setText(disp)
+                item.setToolTip(text)
+                self.one_symbol_table.setItem(0, 7, item)
+            except Exception:
+                pass
+
+    def _set_ai_sending_state(self, prompt_text: str, symbol: str = ''):
+        """Show a small sending indicator in the AI cell and set tooltip with prompt preview and timestamp."""
+        try:
+            from datetime import datetime
+
+            preview = prompt_text if len(prompt_text) <= 120 else prompt_text[:116] + '...'
+            sent_ts = datetime.now().isoformat(sep=' ', timespec='seconds')
+            display = "(sending...)"
+            item = QTableWidgetItem(display)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            tooltip = f"Prompt sent: {sent_ts}\nSymbol: {symbol}\n\nPrompt preview:\n{preview}"
+            item.setToolTip(tooltip)
+            # light gray background to indicate pending state
+            try:
+                from PyQt6.QtGui import QColor
+                item.setBackground(QColor(240, 240, 240))
+            except Exception:
+                pass
+            # Update on main thread
+            try:
+                def do_set():
+                    try:
+                        self.one_symbol_table.setItem(0, 7, item)
+                    except Exception:
+                        pass
+                QTimer.singleShot(0, do_set)
+            except Exception:
+                try:
+                    self.one_symbol_table.setItem(0, 7, item)
+                except Exception:
+                    pass
+            # Schedule a timeout fallback in 30s: if still showing '(sending...)' replace with 'AI timeout'
+            try:
+                def _timeout_check():
+                    try:
+                        cur = self.one_symbol_table.item(0, 7)
+                        if cur and cur.text() == '(sending...)':
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            it = QTableWidgetItem('AI timeout')
+                            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                            it.setToolTip('No AI response within timeout period (30s). Check Perplexity API key and network connection.')
+                            try:
+                                from PyQt6.QtGui import QColor
+                                it.setBackground(QColor(255, 230, 230))
+                            except Exception:
+                                pass
+                            try:
+                                self.one_symbol_table.setItem(0, 7, it)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                QTimer.singleShot(30000, _timeout_check)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _auto_ask_ai_async(self, symbol: str, compact_payload: dict, prompt_text: str = None):
+        """Run _call_ai in a worker thread and update the AI cell when complete.
+
+        If prompt_text is supplied, the worker will use it instead of rebuilding the prompt.
+        """
+        try:
+            # Use a QThread + QObject worker to run the async Perplexity path
+            # This mirrors the Watchlist pattern (create an event loop and call the async API)
+            from PyQt6.QtCore import QThread, QObject, pyqtSignal
+
+            class _AIWorker(QObject):
+                finished = pyqtSignal(str)
+                error = pyqtSignal(str)
+
+                def __init__(self, prompt: str, cfg):
+                    super().__init__()
+                    self.prompt = prompt
+                    self.cfg = cfg
+
+                def run(self):
+                    try:
+                        # Import here to avoid top-level event loop issues
+                        import asyncio
+                        from services.ai_service import AIService
+
+                        svc = AIService(self.cfg)
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            # Call the same async Perplexity path used elsewhere
+                            text = loop.run_until_complete(svc._call_perplexity_api(self.prompt))
+                        finally:
+                            try:
+                                loop.close()
+                            except Exception:
+                                pass
+
+                        if text is None:
+                            self.error.emit('No response from AI')
+                        else:
+                            self.finished.emit(text)
+                    except Exception as e:
+                        try:
+                            self.error.emit(str(e))
+                        except Exception:
+                            pass
+
+            # Build prompt if not provided
+            if prompt_text:
+                prompt = prompt_text
+            else:
+                prompt = self._build_generic_prompt(symbol, compact_payload)
+
+            # Show sending state in UI
+            try:
+                self._set_ai_sending_state(prompt, symbol)
+            except Exception:
+                pass
+
+            # Acquire config
+            try:
+                from core.config_manager import ConfigManager
+                cfg = ConfigManager()
+            except Exception:
+                cfg = None
+
+            worker = _AIWorker(prompt, cfg)
+            thread = QThread()
+            worker.moveToThread(thread)
+
+            # Wire signals
+            thread.started.connect(worker.run)
+
+            def _on_finished(txt: str):
+                try:
+                    self._set_ai_response_cell(txt)
+                    try:
+                        if hasattr(self, 'performance_widget') and getattr(self, 'performance_widget'):
+                            self.performance_widget.add_log_entry(f"Auto AI response received for {symbol}")
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        thread.quit()
+                    except Exception:
+                        pass
+
+            def _on_error(err: str):
+                try:
+                    self._set_ai_response_cell(f"AI Error: {err}")
+                finally:
+                    try:
+                        thread.quit()
+                    except Exception:
+                        pass
+
+            worker.finished.connect(_on_finished)
+            worker.error.connect(_on_error)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+
+            # Keep reference so callers/tests can wait for completion and prevent
+            # QThread destruction while still running (prevents abrupt crash)
+            try:
+                self._last_ai_thread = thread
+                self._last_ai_worker = worker
+            except Exception:
+                pass
+
+            thread.start()
+        except Exception as e:
+            try:
+                self._set_ai_response_cell(f"AI Error: {e}")
+            except Exception:
+                pass
     
     def update_progress(self, progress: int):
         """Update training progress"""
-        # REMOVED: progress_bar removed as training buttons removed
-        # Update pipeline progress bar
+        # Update pipeline progress bar with more accurate calculation
         if progress > 0:
             self.pipeline_progress_bar.setVisible(True)
-            self.pipeline_progress_bar.setValue(progress)
+            # Ensure progress doesn't exceed 100% and matches step counter
+            if self.pipeline_total_steps > 0:
+                calculated_progress = min(100, int((self.pipeline_step_counter / self.pipeline_total_steps) * 100))
+                # Use the higher of received progress or calculated progress for smoother updates
+                actual_progress = max(progress, calculated_progress)
+                self.pipeline_progress_bar.setValue(actual_progress)
+            else:
+                self.pipeline_progress_bar.setValue(progress)
         else:
             self.pipeline_progress_bar.setVisible(False)
     
@@ -2245,6 +3228,10 @@ Full report saved to data/silver/reports/"""
         if status == "completed":
             self.pipeline_step_counter += 1
             self.pipeline_step_label.setText(f"Steps: {self.pipeline_step_counter}/{self.pipeline_total_steps}")
+            # Update progress bar to match step counter
+            if self.pipeline_total_steps > 0:
+                progress_pct = int((self.pipeline_step_counter / self.pipeline_total_steps) * 100)
+                self.pipeline_progress_bar.setValue(min(progress_pct, 100))
         
         current_text = self.pipeline_progress_details.toPlainText()
         lines = current_text.split('\n') if current_text != "Ready to run pipeline..." else []
@@ -2277,10 +3264,14 @@ Full report saved to data/silver/reports/"""
             lines = lines[-20:]
         
         self.pipeline_progress_details.setPlainText('\n'.join(lines))
-        # Auto scroll to bottom
+        # Auto scroll to bottom with immediate UI update
         cursor = self.pipeline_progress_details.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.pipeline_progress_details.setTextCursor(cursor)
+        self.pipeline_progress_details.ensureCursorVisible()
+        
+        # Force immediate UI update
+        QApplication.processEvents()
     
     def clear_pipeline_steps(self):
         """Clear all pipeline steps"""
