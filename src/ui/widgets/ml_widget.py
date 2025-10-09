@@ -1002,12 +1002,9 @@ class DataManagementWidget(QFrame):
         python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
         adapter = Path(__file__).parent.parent.parent.parent / 'tools' / 'download_stocks.py'
         if adapter.exists():
-            if limit == 0:
-                # No limit - download all stocks
-                cmd = [python_exec, str(adapter)]
-            else:
-                # Specific limit
-                cmd = [python_exec, str(adapter), '--limit', str(limit)]
+            cmd = [python_exec, str(adapter)]
+            if limit and limit > 0:
+                cmd.extend(['--limit', str(limit)])
             self._append_log(f"Starting adapter: {cmd}")
             # create thread and runner
             runner = SubprocRunner(cmd)
