@@ -24,8 +24,11 @@ class DataWidget(QWidget):
     - Report Viewer
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, service: DataUpdateService = None):
         super().__init__(parent)
+
+        # remember provided service instance (may be None)
+        self._provided_service = service
 
         layout = QVBoxLayout(self)
 
@@ -117,28 +120,48 @@ class DataWidget(QWidget):
         self._cfg_path = Path("config/data_update.json")
         self._cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # DataUpdateService instance (owned by this widget)
-        self._service = DataUpdateService()
-        self._service.progress.connect(self._on_progress)
-        self._service.log.connect(self._on_log)
-        self._service.completed.connect(self._on_completed)
-        self._service.error.connect(self._on_error)
-        self._service.next_run_changed.connect(self._on_next_run)
-
-        # Load saved schedule or default 01:30
-        saved = self._load_saved_time()
-        if saved is not None:
-            self.time_edit.setTime(saved)
+        # DataUpdateService instance - use provided service or create one
+        if getattr(self, '_provided_service', None) is not None:
+            self._service = self._provided_service
+            # don't start a service owned externally; only connect signals
+            try:
+                self._service.progress.connect(self._on_progress)
+                self._service.log.connect(self._on_log)
+                self._service.completed.connect(self._on_completed)
+                self._service.error.connect(self._on_error)
+                self._service.next_run_changed.connect(self._on_next_run)
+            except Exception:
+                # If connecting fails, continue without throwing
+                pass
+            # Load saved schedule or default 01:30 for display only
+            saved = self._load_saved_time()
+            if saved is not None:
+                self.time_edit.setTime(saved)
+            else:
+                self.time_edit.setTime(dtime(hour=1, minute=30))
         else:
-            self.time_edit.setTime(dtime(hour=1, minute=30))
+            # Create and manage our own service instance
+            self._service = DataUpdateService()
+            self._service.progress.connect(self._on_progress)
+            self._service.log.connect(self._on_log)
+            self._service.completed.connect(self._on_completed)
+            self._service.error.connect(self._on_error)
+            self._service.next_run_changed.connect(self._on_next_run)
 
-        # Apply scheduled time to service and start it
-        try:
-            self._service.set_scheduled_time(self.time_edit.time().toPyTime())
-            self._service.start()
-        except Exception:
-            # Non-fatal if service fails to start during construction
-            self._append_log("Failed to start DataUpdateService at widget init")
+            # Load saved schedule or default 01:30
+            saved = self._load_saved_time()
+            if saved is not None:
+                self.time_edit.setTime(saved)
+            else:
+                self.time_edit.setTime(dtime(hour=1, minute=30))
+
+            # Apply scheduled time to service and start it
+            try:
+                self._service.set_scheduled_time(self.time_edit.time().toPyTime())
+                self._service.start()
+            except Exception:
+                # Non-fatal if service fails to start during construction
+                self._append_log("Failed to start DataUpdateService at widget init")
 
     # --- Slots and service handlers ---
     def _on_run_now(self):

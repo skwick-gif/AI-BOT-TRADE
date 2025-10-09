@@ -1734,6 +1734,29 @@ class MLWidget(QWidget):
         self.pipeline_worker.ml_widget = self
         
         self.logger.info("ML widget initialized")
+
+    # --- Helpers to access data controls safely (ML-level data tab removed) ---
+    def _get_symbols_from_data_widget(self):
+        """Return list of tickers from the ML-level data widget if present, else empty list."""
+        try:
+            if hasattr(self, 'data_management_widget') and getattr(self, 'data_management_widget'):
+                txt = self.data_management_widget.symbols_input.toPlainText().strip()
+                if txt:
+                    return [s.strip().upper() for s in txt.split(',') if s.strip()]
+        except Exception:
+            pass
+        return []
+
+    def _get_selected_cache_from_data_widget(self):
+        """Return selected cache name from ML-level data widget if present, else None."""
+        try:
+            if hasattr(self, 'data_management_widget') and getattr(self, 'data_management_widget'):
+                combo = getattr(self.data_management_widget, 'training_cache_combo', None)
+                if combo is not None:
+                    return combo.currentData()
+        except Exception:
+            pass
+        return None
     
     def create_pipeline_tab(self):
         """Create the pipeline tab widget with responsive scroll area"""
@@ -2065,51 +2088,31 @@ class MLWidget(QWidget):
     
     def create_diagnostics_tab(self):
         """Create diagnostics tab for system checks"""
+        # Keep a minimal diagnostics tab: only title and an empty results area placeholder.
         tab_widget = QWidget()
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
-        
-        # Title
+
+        # Title (keep)
         title = QLabel("System Diagnostics & Health Checks")
         title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
-        
-        # Description
-        desc = QLabel("Run basic system checks to verify core components are working.\n\nFor comprehensive data reports, use the DATA tab → Report sub-tab.")
+
+        # Minimal placeholder description (kept for context)
+        desc = QLabel("Diagnostics: basic checks available. For full reports use the DATA → Report tab.")
         desc.setWordWrap(True)
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
-        
-        # Control buttons
-        buttons_layout = QHBoxLayout()
-        
-        self.run_diagnostics_btn = QPushButton("🔍 Run System Check")
-        self.run_diagnostics_btn.clicked.connect(self.run_system_check)
-        self.run_diagnostics_btn.setFixedWidth(200)
-        buttons_layout.addWidget(self.run_diagnostics_btn)
-        
-        buttons_layout.addStretch()
-        layout.addLayout(buttons_layout)
-        
-        # Progress
-        self.diagnostics_progress = QProgressBar()
-        self.diagnostics_progress.setVisible(False)
-        layout.addWidget(self.diagnostics_progress)
-        
-        # Results area
-        results_group = QGroupBox("Check Results")
-        results_layout = QVBoxLayout(results_group)
-        
+
+        # Simple read-only results area (empty)
         self.diagnostics_results = QTextEdit()
         self.diagnostics_results.setReadOnly(True)
-        self.diagnostics_results.setPlaceholderText("System check results will appear here...")
-        self.diagnostics_results.setMinimumHeight(400)
-        results_layout.addWidget(self.diagnostics_results)
-        
-        layout.addWidget(results_group)
-        
+        self.diagnostics_results.setPlaceholderText("Diagnostics results will appear here (cleared to header only)...")
+        self.diagnostics_results.setMinimumHeight(120)
+        layout.addWidget(self.diagnostics_results)
+
         return tab_widget
     
     # REMOVED: Pipeline configuration and progress moved to dedicated Pipeline tab
@@ -2126,9 +2129,8 @@ class MLWidget(QWidget):
                 tickers = [single_stock]
                 self.performance_widget.add_log_entry(f"Running pipeline on single stock: {single_stock}")
             else:
-                # Collect tickers from Data tab
-                symbols_text = self.data_management_widget.symbols_input.toPlainText().strip()
-                tickers = [s.strip().upper() for s in symbols_text.split(',') if s.strip()]
+                # Collect tickers from Data tab (safe helper)
+                tickers = self._get_symbols_from_data_widget()
                 # If none provided: use entire available bronze dataset
                 if not tickers:
                     # Leave tickers empty so worker loads all available bronze Parquet files
@@ -2153,7 +2155,7 @@ class MLWidget(QWidget):
                 "use_sentiment": self.use_sentiment_data.isChecked(),
                 "use_parallel": self.use_parallel_processing.isChecked(),
                 # cache selection
-                "selected_cache": self.data_management_widget.training_cache_combo.currentData(),
+                "selected_cache": self._get_selected_cache_from_data_widget(),
             }
 
             # UI state
@@ -2218,8 +2220,7 @@ class MLWidget(QWidget):
         try:
             self.performance_widget.load_metrics_csv()
             # If single ticker was requested, filter preds preview to that ticker automatically
-            symbols_text = self.data_management_widget.symbols_input.toPlainText().strip()
-            tickers = [s.strip().upper() for s in symbols_text.split(',') if s.strip()]
+            tickers = self._get_symbols_from_data_widget()
             self.performance_widget.load_preds_parquet(filter_tickers=tickers if tickers else None)
         except Exception:
             pass
