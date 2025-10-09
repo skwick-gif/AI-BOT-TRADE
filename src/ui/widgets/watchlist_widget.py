@@ -87,15 +87,15 @@ class WatchlistTable(QTableWidget):
             btn.setAutoRaise(False)  # Make button more visible
             btn.setStyleSheet("""
                 QToolButton {
-                    font-size: 8px; 
+                    font-size: 6px; 
                     font-weight: bold;
-                    padding: 2px 3px;
+                    padding: 1px 2px;
                     border: 1px solid #ccc;
                     background-color: #f8f9fa;
-                    border-radius: 3px;
+                    border-radius: 2px;
                     color: #333;
-                    min-width: 18px;
-                    min-height: 18px;
+                    min-width: 14px;
+                    min-height: 14px;
                 }
                 QToolButton:hover {
                     background-color: #e9ecef;
@@ -217,11 +217,17 @@ class WatchlistTable(QTableWidget):
                     async def get_rating_and_prediction():
                         ai_service = AIService(self.config)
                         
-                        # Get AI rating (0-10 score)
+                        # Get AI rating (0-10 score) - using sync method like scanner
                         try:
-                            rating_score = ai_service.score_symbol_numeric_sync(
+                            # Use the existing ai_service instead of creating new one
+                            from services.ai_service import AIService
+                            from core.config_manager import ConfigManager
+                            config = ConfigManager().load()
+                            sync_ai_service = AIService(config)
+                            
+                            rating_score = sync_ai_service.score_symbol_numeric_sync(
                                 self.symbol, 
-                                timeout=10.0,
+                                timeout=8.0,
                                 profile="swing"  # Default to swing trading
                             )
                             rating = f"{rating_score:.1f}/10"
@@ -233,8 +239,10 @@ class WatchlistTable(QTableWidget):
                                 rating = "Timeout"
                             elif "401" in error_msg or "unauthorized" in error_msg.lower():
                                 rating = "Auth Error"
+                            elif "400" in error_msg:
+                                rating = "400 Error"
                             else:
-                                rating = f"Error: {error_msg[:15]}"
+                                rating = "Error"
                         
                         # Get AI prediction (BUY/SELL/HOLD signal)
                         try:
@@ -426,15 +434,15 @@ class WatchlistTable(QTableWidget):
             btn.setAutoRaise(False)
             btn.setStyleSheet("""
                 QToolButton {
-                    font-size: 8px; 
+                    font-size: 6px; 
                     font-weight: bold;
-                    padding: 2px 3px;
+                    padding: 1px 2px;
                     border: 1px solid #ccc;
                     background-color: #f8f9fa;
-                    border-radius: 3px;
+                    border-radius: 2px;
                     color: #333;
-                    min-width: 18px;
-                    min-height: 18px;
+                    min-width: 14px;
+                    min-height: 14px;
                 }
                 QToolButton:hover {
                     background-color: #e9ecef;
