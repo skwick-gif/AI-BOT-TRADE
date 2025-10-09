@@ -26,6 +26,14 @@ class PerplexityConfig:
     """Perplexity API Configuration"""
     api_key: str = ""
     model: str = "reasoning-pro"  # default model; AIService will fallback if invalid
+    # Finance-specific overrides: when force_finance=True the app will prefer the
+    # finance_model for all Perplexity calls and add finance-focused search filters
+    force_finance: bool = True
+    finance_model: str = "llama-3.1-sonar-small-128k-online"
+    # Comma-separated list of domains to prefer for finance answers (used as search_domain_filter)
+    search_domains: str = "finance.yahoo.com,marketwatch.com,bloomberg.com,reuters.com"
+    # How recent search results should be (e.g. 'week', 'month', 'day')
+    search_recency: str = "week"
     max_tokens: int = 2000
 
 
@@ -103,6 +111,10 @@ class ConfigManager:
         return PerplexityConfig(
             api_key=os.getenv("PERPLEXITY_API_KEY", ""),
             model=os.getenv("PERPLEXITY_MODEL", "reasoning-pro"),
+            force_finance=(os.getenv("PERPLEXITY_FORCE_FINANCE", "true").lower() in ("1","true","yes")),
+            finance_model=os.getenv("PERPLEXITY_FINANCE_MODEL", "llama-3.1-sonar-small-128k-online"),
+            search_domains=os.getenv("PERPLEXITY_SEARCH_DOMAINS", "finance.yahoo.com,marketwatch.com,bloomberg.com,reuters.com"),
+            search_recency=os.getenv("PERPLEXITY_SEARCH_RECENCY", "week"),
             max_tokens=self._get_int("PERPLEXITY_MAX_TOKENS", 2000)
         )
     

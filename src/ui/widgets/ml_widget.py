@@ -42,57 +42,6 @@ class ModelTrainingWorker(QObject):
         self.logger = get_logger("MLTraining")
         self.is_training = False
     
-    def start_training(self, model_config: dict):
-        """Start model training"""
-        try:
-            self.is_training = True
-            self.status_updated.emit("Initializing training...")
-            self.progress_updated.emit(0)
-            
-            # Simulate training process
-            import time
-            
-            steps = [
-                "Initializing...",
-                "Loading configuration...", 
-                "Preparing training environment...",
-                "Ready for real data connection...",
-                "Training process ready...",
-                "Waiting for data source...",
-                "Training setup complete..."
-            ]
-            
-            for i, step in enumerate(steps):
-                if not self.is_training:
-                    break
-                    
-                self.status_updated.emit(step)
-                progress = int((i + 1) / len(steps) * 100)
-                self.progress_updated.emit(progress)
-                
-                # Simulate work
-                time.sleep(1.0)
-            
-            # Training completed successfully
-            if self.is_training:
-                # Training completed - return basic results structure
-                results = {
-                    'accuracy': 0.0,
-                    'precision': 0.0,
-                    'recall': 0.0,
-                    'f1_score': 0.0,
-                    'validation_loss': 0.0,
-                    'training_time': 0.0
-                }
-                
-                self.training_completed.emit(results)
-                self.status_updated.emit("Training completed - Connect to data source for real training!")
-            
-        except Exception as e:
-            self.error_occurred.emit(str(e))
-        finally:
-            self.is_training = False
-    
     def stop_training(self):
         """Stop training process"""
         self.is_training = False
@@ -455,12 +404,16 @@ class PipelineRunWorker(QObject):
             # If this run was for a single ticker, prepare a compact in-memory payload
             compact_payload = None
             try:
-                if isinstance(tickers, (list, tuple)) and len(tickers) == 1 and preds:
+                # Use the aggregated final_preds (all horizons) when building compact payload
+                if isinstance(tickers, (list, tuple)) and len(tickers) == 1 and final_preds:
                     sym = tickers[0].upper()
                     signals = []
                     price_targets = {}
                     for h in [1, 5, 10]:
-                        dfp = preds.get(str(h)) if preds else None
+                        # final_preds keys may be strings like '1' or ints; try both
+                        dfp = None
+                        if isinstance(final_preds, dict):
+                            dfp = final_preds.get(str(h)) or final_preds.get(h) or None
                         if dfp is None or dfp.empty:
                             continue
                         # Filter for ticker (case-insensitive)
@@ -477,13 +430,25 @@ class PipelineRunWorker(QObject):
                         pt = float(latest.get('price_target', latest.get('adj_close', latest.get('close', 0.0))))
                         model_name = latest.get('model', None)
                         signals.append((h, pred_lbl, conf))
-                        price_targets[h] = pt
+                        # Use integer keys for horizons so UI lookups (1,5,10) work consistently
+                        price_targets[int(h)] = pt
                         # store per-horizon meta so UI can show tooltips
                         if 'meta' not in price_targets:
                             price_targets['meta'] = {}
-                        price_targets['meta'][h] = {
+                        # include the source date so UI can show which date the price_target refers to
+                        src_date = latest.get('date', None)
+                        # normalize to isoformat string if it's a Timestamp or datetime-like
+                        try:
+                            if hasattr(src_date, 'isoformat'):
+                                src_date_str = src_date.isoformat()
+                            else:
+                                src_date_str = str(src_date)
+                        except Exception:
+                            src_date_str = str(src_date)
+                        price_targets['meta'][int(h)] = {
                             'confidence': conf,
                             'model': model_name,
+                            'date': src_date_str,
                         }
 
                     # Derive overall signal via confidence-weighted vote
@@ -512,6 +477,16 @@ class PipelineRunWorker(QObject):
                 "saved_predictions": int(saved),
                 "compact_table": compact_payload,
             })
+            # Persist compact payload to disk for debugging (works for headless runs too)
+            try:
+                if compact_payload is not None:
+                    from pathlib import Path as _Path
+                    import json as _json
+                    _Path('data/silver').mkdir(parents=True, exist_ok=True)
+                    fp = _Path('data/silver/debug_compact_from_worker.json')
+                    fp.write_text(_json.dumps(compact_payload, default=str, indent=2), encoding='utf-8')
+            except Exception:
+                pass
             if best_result:
                 self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
             else:
@@ -2069,7 +2044,7 @@ class MLWidget(QWidget):
         self.one_symbol_table = QTableWidget()
         # Add a small Ask-AI column at the end (compact icon/button) and a Current Price column
         self.one_symbol_table.setColumnCount(8)
-        self.one_symbol_table.setHorizontalHeaderLabels(["Symbol", "Price", "Signal", "Conf", "Day1", "Day5", "Day10", "Ask"])
+        self.one_symbol_table.setHorizontalHeaderLabels(["Symbol", "Price", "Signal", "Conf", "Day1", "Day5", "Day10", "7Days AI Prediction"])
         self.one_symbol_table.setRowCount(1)
         # Initialize empty cells
         for c in range(8):
@@ -2083,6 +2058,24 @@ class MLWidget(QWidget):
             "QTableWidget::item{ padding:1px 4px; }"
             "QHeaderView::section{ padding:1px 4px; font-size:9px; }"
         )
+        # Adjust column sizing so the long header for the AI column is fully visible
+        try:
+            from PyQt6.QtWidgets import QHeaderView
+            header = self.one_symbol_table.horizontalHeader()
+            # Small content-based sizes for first columns
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            # Day columns keep reasonable fixed width
+            self.one_symbol_table.setColumnWidth(4, 70)
+            self.one_symbol_table.setColumnWidth(5, 70)
+            self.one_symbol_table.setColumnWidth(6, 70)
+            # Make the AI column stretch and give it a comfortable minimum width
+            header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+            self.one_symbol_table.setColumnWidth(7, 220)
+        except Exception:
+            pass
         # Hide the vertical header (row numbers) to save space
         try:
             self.one_symbol_table.verticalHeader().setVisible(False)
@@ -2399,24 +2392,120 @@ class MLWidget(QWidget):
         # Check if this was a single stock run and generate special report
         single_stock = self.single_stock_input.text().strip().upper()
         if single_stock:
-            # If worker provided a compact in-memory table, use it to update the One Symbol Prediction box
+            # Always try to reconstruct compact payload from persisted preds parquet files.
+            # This ensures the One Symbol table is populated even if the worker's in-memory
+            # compact payload is incomplete.
+            reconstructed = None
+            try:
+                import pandas as _pd
+                from pathlib import Path as _Path
+                ticker = single_stock.upper()
+                preds_map = {}
+                for h in [1, 5, 10]:
+                    fp = _Path(f"data/silver/preds/preds_h{h}.parquet")
+                    if fp.exists():
+                        try:
+                            df = _pd.read_parquet(fp)
+                            if 'ticker' in df.columns:
+                                df_t = df[df['ticker'].str.upper() == ticker]
+                            else:
+                                df_t = df
+                            if not df_t.empty:
+                                latest = df_t.sort_values('date').iloc[-1]
+                                preds_map[h] = latest
+                        except Exception:
+                            pass
+
+                if preds_map:
+                    price_targets = {}
+                    per_horizon = {}
+                    signals = []
+                    for h in [1, 5, 10]:
+                        if h in preds_map:
+                            r = preds_map[h]
+                            pred_lbl = str(r.get(f'y_h{h}_pred', r.get('y_pred', 'HOLD'))).upper()
+                            conf = float(r.get('confidence', 0.0)) if r.get('confidence', None) is not None else 0.0
+                            pt = float(r.get('price_target', r.get('adj_close', r.get('close', 0.0))))
+                            model_name = r.get('model', None)
+                            price_targets[int(h)] = pt
+                            per_horizon[int(h)] = {'signal': pred_lbl, 'confidence': conf, 'model': model_name}
+                            signals.append((h, pred_lbl, conf))
+
+                    overall = '-'
+                    if signals:
+                        score_map = {'BUY': 0.0, 'SELL': 0.0, 'HOLD': 0.0}
+                        for (_h, lbl, conf) in signals:
+                            if lbl == 'UP':
+                                score_map['BUY'] += conf
+                            elif lbl == 'DOWN':
+                                score_map['SELL'] += conf
+                            else:
+                                score_map['HOLD'] += conf
+                        overall = max(score_map.keys(), key=lambda k: score_map[k])
+
+                    price_targets['meta'] = {}
+                    for h, info in per_horizon.items():
+                        try:
+                            src_date = preds_map[h].get('date', None)
+                            try:
+                                src_date_str = src_date.isoformat() if hasattr(src_date, 'isoformat') else str(src_date)
+                            except Exception:
+                                src_date_str = str(src_date)
+                        except Exception:
+                            src_date_str = None
+                        price_targets['meta'][int(h)] = {
+                            'confidence': info.get('confidence', 0.0),
+                            'model': info.get('model', None),
+                            'date': src_date_str,
+                        }
+
+                    reconstructed = {
+                        'symbol': ticker,
+                        'overall_signal': overall,
+                        'price_targets': price_targets,
+                        'per_horizon': {int(k): {'signal': v.get('signal'), 'confidence': v.get('confidence')} for k, v in per_horizon.items()}
+                    }
+            except Exception:
+                reconstructed = None
+
+            # Use reconstructed payload if available; otherwise fall back to worker compact_table
             compact = summary.get('compact_table') if isinstance(summary, dict) else None
-            if compact:
+            final_compact = reconstructed if reconstructed is not None else compact
+            if final_compact:
                 try:
-                    self._update_one_symbol_table(compact.get('symbol', single_stock), compact.get('overall_signal', '-'), compact.get('price_targets', {}))
-                    # If Auto AI is enabled, automatically ask AI in background and populate the AI cell
+                    try:
+                        self.performance_widget.add_log_entry(
+                            f"Using compact payload for UI (source: {'reconstructed' if reconstructed else 'worker'})"
+                        )
+                    except Exception:
+                        pass
+                    # Update the compact table display
+                    self._update_one_symbol_table(
+                        final_compact.get('symbol', single_stock),
+                        final_compact.get('overall_signal', '-'),
+                        final_compact.get('price_targets', {}),
+                    )
                     try:
                         if getattr(self, 'auto_ai_checkbox', None) and self.auto_ai_checkbox.isChecked():
-                            # Run AI in background so UI isn't blocked
                             try:
                                 self.performance_widget.add_log_entry(f"Auto AI enabled - requesting AI for {single_stock}")
                             except Exception:
                                 pass
-                            self._auto_ask_ai_async(single_stock, compact)
+                            # Build prompt now so we can indicate to the user that the prompt was sent
+                            try:
+                                prompt_text = self._build_generic_prompt(single_stock, final_compact)
+                            except Exception:
+                                prompt_text = self._build_generic_prompt(single_stock, {})
+                            # Show a small sending indicator in the AI cell with tooltip containing timestamp and prompt preview
+                            try:
+                                self._set_ai_sending_state(prompt_text, single_stock)
+                            except Exception:
+                                pass
+                            # Start background AI request, pass prompt_text so worker uses the exact prompt we showed
+                            self._auto_ask_ai_async(single_stock, final_compact, prompt_text)
                     except Exception:
                         pass
                 except Exception:
-                    # Fallback to file-based report generation if something goes wrong
                     self._generate_single_stock_report(single_stock)
             else:
                 self._generate_single_stock_report(single_stock)
@@ -2679,6 +2768,19 @@ Full report saved to data/silver/reports/"""
                     price_item = mk_item("N/A")
                 else:
                     price_item = mk_item(f"${cur_price:.2f}")
+                    # add tooltip showing the date of the current price (last row)
+                    try:
+                        last_date = None
+                        if 'date' in dfp.columns:
+                            last_date = dfp['date'].dropna().iloc[-1]
+                            # format
+                            try:
+                                last_date_str = last_date.isoformat() if hasattr(last_date, 'isoformat') else str(last_date)
+                            except Exception:
+                                last_date_str = str(last_date)
+                            price_item.setToolTip(f"Price as of: {last_date_str}")
+                    except Exception:
+                        pass
                 self.one_symbol_table.setItem(0, 1, price_item)
             except Exception:
                 try:
@@ -2745,6 +2847,10 @@ Full report saved to data/silver/reports/"""
                                 tip_parts.append(f"Confidence: {float(mconf):.1%}")
                             except Exception:
                                 tip_parts.append(f"Confidence: {mconf}")
+                        # include date if present
+                        mdate = mm.get('date', None)
+                        if mdate:
+                            tip_parts.append(f"Source date: {mdate}")
                 # Also check compact per_horizon key if present
                 if isinstance(price_targets.get('per_horizon', {}), dict) and price_targets.get('per_horizon', {}).get(h):
                     ph2 = price_targets['per_horizon'][h]
@@ -2938,8 +3044,69 @@ Full report saved to data/silver/reports/"""
             except Exception:
                 pass
 
-    def _auto_ask_ai_async(self, symbol: str, compact_payload: dict):
-        """Run _call_ai in a worker thread and update the AI cell when complete."""
+    def _set_ai_sending_state(self, prompt_text: str, symbol: str = ''):
+        """Show a small sending indicator in the AI cell and set tooltip with prompt preview and timestamp."""
+        try:
+            from datetime import datetime
+
+            preview = prompt_text if len(prompt_text) <= 120 else prompt_text[:116] + '...'
+            sent_ts = datetime.now().isoformat(sep=' ', timespec='seconds')
+            display = "(sending...)"
+            item = QTableWidgetItem(display)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            tooltip = f"Prompt sent: {sent_ts}\nSymbol: {symbol}\n\nPrompt preview:\n{preview}"
+            item.setToolTip(tooltip)
+            # light gray background to indicate pending state
+            try:
+                from PyQt6.QtGui import QColor
+                item.setBackground(QColor(240, 240, 240))
+            except Exception:
+                pass
+            # Update on main thread
+            try:
+                def do_set():
+                    try:
+                        self.one_symbol_table.setItem(0, 7, item)
+                    except Exception:
+                        pass
+                QTimer.singleShot(0, do_set)
+            except Exception:
+                try:
+                    self.one_symbol_table.setItem(0, 7, item)
+                except Exception:
+                    pass
+            # Schedule a timeout fallback in 30s: if still showing '(sending...)' replace with 'AI timeout'
+            try:
+                def _timeout_check():
+                    try:
+                        cur = self.one_symbol_table.item(0, 7)
+                        if cur and cur.text() == '(sending...)':
+                            from PyQt6.QtWidgets import QTableWidgetItem
+                            it = QTableWidgetItem('AI timeout')
+                            it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                            it.setToolTip('No AI response within timeout period (30s). Check Perplexity API key and network connection.')
+                            try:
+                                from PyQt6.QtGui import QColor
+                                it.setBackground(QColor(255, 230, 230))
+                            except Exception:
+                                pass
+                            try:
+                                self.one_symbol_table.setItem(0, 7, it)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                QTimer.singleShot(30000, _timeout_check)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _auto_ask_ai_async(self, symbol: str, compact_payload: dict, prompt_text: str = None):
+        """Run _call_ai in a worker thread and update the AI cell when complete.
+
+        If prompt_text is supplied, the worker will use it instead of rebuilding the prompt.
+        """
         try:
             # Use QRunnable to avoid creating lots of QThreads
             from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSignal, QObject
@@ -2950,11 +3117,18 @@ Full report saved to data/silver/reports/"""
                     self.outer = outer
                     self.symbol = symbol
                     self.payload = payload
+                    self.prompt_text = None
+
+                def set_prompt(self, prompt):
+                    self.prompt_text = prompt
 
                 def run(self):
                     try:
                         # pass the full compact payload so prompt builder can access per_horizon/meta
-                        prompt = self.outer._build_generic_prompt(self.symbol, self.payload)
+                        if self.prompt_text:
+                            prompt = self.prompt_text
+                        else:
+                            prompt = self.outer._build_generic_prompt(self.symbol, self.payload)
                         res = self.outer._call_ai(prompt)
                         # Update UI on main thread
                         try:
@@ -2972,8 +3146,14 @@ Full report saved to data/silver/reports/"""
                         except Exception:
                             pass
 
+            wk = _Worker(self, symbol, compact_payload)
+            if prompt_text:
+                try:
+                    wk.set_prompt(prompt_text)
+                except Exception:
+                    pass
             pool = QThreadPool.globalInstance()
-            pool.start(_Worker(self, symbol, compact_payload))
+            pool.start(wk)
         except Exception as e:
             try:
                 self._set_ai_response_cell(f"AI Error: {e}")

@@ -159,8 +159,10 @@ Always remind users about risk management and due diligence."""
             "Content-Type": "application/json"
         }
         
+        # If force_finance is enabled, prefer the finance_model and add search filters
+        model_to_use = self.config.perplexity.finance_model if getattr(self.config.perplexity, 'force_finance', False) else self.config.perplexity.model
         payload = {
-            "model": self.config.perplexity.model,
+            "model": model_to_use,
             "messages": [
                 {
                     "role": "user",
@@ -172,6 +174,17 @@ Always remind users about risk management and due diligence."""
             "top_p": 0.9,
             "stream": False
         }
+        # Add finance-specific search filters if requested
+        try:
+            if getattr(self.config.perplexity, 'force_finance', False):
+                domains = getattr(self.config.perplexity, 'search_domains', None)
+                if domains:
+                    payload['search_domain_filter'] = [d.strip() for d in str(domains).split(',') if d.strip()]
+                recency = getattr(self.config.perplexity, 'search_recency', None)
+                if recency:
+                    payload['search_recency_filter'] = recency
+        except Exception:
+            pass
         
         self.logger.debug(f"Calling Perplexity API with model: {self.config.perplexity.model}")
         
@@ -516,11 +529,17 @@ Always remind users about risk management and due diligence."""
                 "Content-Type": "application/json"
             }
             
+            # Build payload for simple analysis using config-driven model and filters
+            try:
+                model_to_use = self.config.perplexity.finance_model if getattr(self.config.perplexity, 'force_finance', False) else self.config.perplexity.model
+            except Exception:
+                model_to_use = "llama-3.1-sonar-small-128k-online"
+
             payload = {
-                "model": "llama-3.1-sonar-small-128k-online",
+                "model": model_to_use,
                 "messages": [
                     {
-                        "role": "system", 
+                        "role": "system",
                         "content": "You are a professional stock analyst. Provide concise, numerical assessments."
                     },
                     {
@@ -531,14 +550,23 @@ Always remind users about risk management and due diligence."""
                 "max_tokens": 100,
                 "temperature": 0.1,
                 "top_p": 0.9,
-                "search_domain_filter": ["finance.yahoo.com", "marketwatch.com", "bloomberg.com", "reuters.com"],
                 "return_citations": False,
-                "search_recency_filter": "week",
                 "top_k": 0,
                 "stream": False,
                 "presence_penalty": 0,
                 "frequency_penalty": 1
             }
+            # Apply configured domain and recency filters when forcing finance
+            try:
+                if getattr(self.config.perplexity, 'force_finance', False):
+                    domains = getattr(self.config.perplexity, 'search_domains', None)
+                    if domains:
+                        payload['search_domain_filter'] = [d.strip() for d in str(domains).split(',') if d.strip()]
+                    recency = getattr(self.config.perplexity, 'search_recency', None)
+                    if recency:
+                        payload['search_recency_filter'] = recency
+            except Exception:
+                pass
             
             # Make request with timeout
             session = self.get_http_session()
