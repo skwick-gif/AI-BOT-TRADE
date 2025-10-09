@@ -1002,7 +1002,12 @@ class DataManagementWidget(QFrame):
         python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
         adapter = Path(__file__).parent.parent.parent.parent / 'tools' / 'download_stocks.py'
         if adapter.exists():
-            cmd = [python_exec, str(adapter), '--limit', str(limit or 5)]
+            if limit == 0:
+                # No limit - download all stocks
+                cmd = [python_exec, str(adapter)]
+            else:
+                # Specific limit
+                cmd = [python_exec, str(adapter), '--limit', str(limit)]
             self._append_log(f"Starting adapter: {cmd}")
             # create thread and runner
             runner = SubprocRunner(cmd)
@@ -1019,7 +1024,8 @@ class DataManagementWidget(QFrame):
         else:
             # fallback to built-in service run_now
             self._append_log("Adapter not found; falling back to DataUpdateService.run_now")
-            self._service.run_now(batch_limit=limit or None)
+            batch_limit = None if limit == 0 else limit
+            self._service.run_now(batch_limit=batch_limit)
             self._append_log("Triggered update run…")
 
     def _on_stop(self):
@@ -2038,6 +2044,12 @@ class MLWidget(QWidget):
         self.pipeline_progress_bar.setVisible(False)
         # Render compact metrics to table
         self.performance_widget.update_metrics(summary)
+        
+        # Check if this was a single stock run and generate special report
+        single_stock = self.single_stock_input.text().strip().upper()
+        if single_stock:
+            self._generate_single_stock_report(single_stock)
+        
         # Auto-refresh metrics/preds view based on last run
         try:
             self.performance_widget.load_metrics_csv()
@@ -2058,6 +2070,146 @@ class MLWidget(QWidget):
         QMessageBox.critical(self, "Pipeline Error", error)
         self.logger.error(f"Pipeline error: {error}")
     
+    def _generate_single_stock_report(self, ticker: str):
+        """Generate a special trading report for single stock analysis."""
+        try:
+            import pandas as pd
+            from pathlib import Path
+            from datetime import datetime
+            
+            self.performance_widget.add_log_entry(f"Generating special trading report for {ticker}...")
+            
+            # Load predictions for all horizons
+            preds_data = {}
+            horizons = [1, 5, 10]  # Default horizons: 1, 5, 10 days
+            
+            for h in horizons:
+                pred_file = Path(f"data/silver/preds/preds_h{h}.parquet")
+                if pred_file.exists():
+                    df = pd.read_parquet(pred_file)
+                    # Filter for our ticker
+                    ticker_df = df[df['ticker'].str.upper() == ticker.upper()].copy()
+                    if not ticker_df.empty:
+                        # Get latest prediction
+                        latest = ticker_df.sort_values('date').iloc[-1]
+                        preds_data[h] = latest
+            
+            if not preds_data:
+                self.performance_widget.add_log_entry(f"No predictions found for {ticker}")
+                return
+                
+            # Generate trading signals and price targets
+            report_lines = []
+            report_lines.append("=" * 60)
+            report_lines.append(f"🎯 TRADING REPORT FOR {ticker}")
+            report_lines.append(f"📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            report_lines.append("=" * 60)
+            report_lines.append("")
+            
+            # Current price (from latest available data)
+            latest_data = None
+            for h in horizons:
+                if h in preds_data:
+                    latest_data = preds_data[h]
+                    break
+                    
+            if latest_data is not None:
+                current_price = float(latest_data.get('adj_close', latest_data.get('close', 0)))
+                report_lines.append(f"💲 Current Price: ${current_price:.2f}")
+                report_lines.append("")
+            
+            # Trading signals and price targets
+            signals = []
+            price_targets = {}
+            
+            for h in [1, 5, 10]:  # Specific horizons requested: 1, 5, 10 days
+                if h in preds_data:
+                    pred = preds_data[h]
+                    signal = str(pred.get('y_pred', 'HOLD')).upper()
+                    confidence = float(pred.get('confidence', 0.5))
+                    price_target = float(pred.get('price_target', current_price if latest_data else 0))
+                    
+                    signals.append((h, signal, confidence))
+                    price_targets[h] = price_target
+            
+            # Overall signal (majority vote with confidence weighting)
+            signal_scores = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
+            for h, signal, conf in signals:
+                # Map predictions to trading signals
+                if signal == 'UP':
+                    signal_scores['BUY'] += conf
+                elif signal == 'DOWN':
+                    signal_scores['SELL'] += conf
+                else:
+                    signal_scores['HOLD'] += conf
+            
+            # Determine overall signal
+            overall_signal = max(signal_scores.keys(), key=lambda k: signal_scores[k])
+            overall_confidence = signal_scores[overall_signal] / len(signals) if signals else 0
+            
+            # Display overall recommendation
+            signal_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
+            report_lines.append(f"📊 OVERALL RECOMMENDATION: {signal_emoji.get(overall_signal, '⚪')} {overall_signal}")
+            report_lines.append(f"🎯 Confidence: {overall_confidence:.1%}")
+            report_lines.append("")
+            
+            # Detailed predictions by horizon
+            report_lines.append("📈 PRICE TARGETS BY HORIZON:")
+            report_lines.append("-" * 40)
+            
+            for h in [1, 5, 10]:
+                if h in price_targets:
+                    target = price_targets[h]
+                    if latest_data:
+                        change_pct = ((target - current_price) / current_price) * 100
+                        change_symbol = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡️"
+                        signal_info = next((s for s in signals if s[0] == h), (h, 'HOLD', 0.5))
+                        
+                        report_lines.append(f"{h:2d} Days: ${target:6.2f} ({change_pct:+5.1f}%) {change_symbol} [{signal_info[1]}] conf:{signal_info[2]:.1%}")
+            
+            report_lines.append("")
+            report_lines.append("=" * 60)
+            
+            # Save report to file
+            report_dir = Path("data/silver/reports")
+            report_dir.mkdir(parents=True, exist_ok=True)
+            
+            report_file = report_dir / f"{ticker}_trading_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            report_content = "\n".join(report_lines)
+            
+            report_file.write_text(report_content, encoding='utf-8')
+            
+            # Display in UI log
+            for line in report_lines:
+                self.performance_widget.add_log_entry(line)
+            
+            self.performance_widget.add_log_entry(f"📄 Full report saved to: {report_file}")
+            
+            # Show popup with summary
+            from PyQt6.QtWidgets import QMessageBox
+            summary_msg = f"""
+🎯 TRADING REPORT FOR {ticker}
+
+💲 Current Price: ${current_price:.2f}
+
+📊 RECOMMENDATION: {overall_signal}
+🎯 Confidence: {overall_confidence:.1%}
+
+📈 PRICE TARGETS:
+• 1 Day:  ${price_targets.get(1, 0):.2f}
+• 5 Days: ${price_targets.get(5, 0):.2f}  
+• 10 Days: ${price_targets.get(10, 0):.2f}
+
+Report saved to data/silver/reports/
+            """
+            
+            QMessageBox.information(self, f"Trading Report - {ticker}", summary_msg.strip())
+            
+        except Exception as e:
+            self.performance_widget.add_log_entry(f"Error generating single stock report: {e}")
+            import traceback
+            self.logger.error(f"Single stock report error: {traceback.format_exc()}")
+
     def stop_pipeline_run(self):
         """Stop the running pipeline."""
         if hasattr(self, 'pipeline_worker') and self.pipeline_worker.is_running:
