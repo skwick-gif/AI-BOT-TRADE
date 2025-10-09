@@ -202,10 +202,12 @@ class WatchlistTable(QTableWidget):
             symbol_item = self.item(row, 0)
             if symbol_item:
                 symbol = symbol_item.text()
-                # Update display with new reference date
-                self.update_symbol_display(symbol)
-                # Save the updated watchlist
-                self.save_watchlist()
+                # Only update if the symbol is fully loaded in symbol_data
+                if symbol in self.symbol_data:
+                    # Update display with new reference date
+                    self.update_symbol_display(symbol)
+                    # Save the updated watchlist
+                    self.save_watchlist()
 
     def get_symbols(self) -> list:
         """Get all symbols in the watchlist"""
