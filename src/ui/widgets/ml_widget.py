@@ -401,7 +401,7 @@ class PipelineRunWorker(QObject):
                 self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
             else:
                 self.status_updated.emit("Pipeline completed, but no best result identified")
-            self.progress_updated.emit(100)  # Pipeline fully complete
+            # DO NOT emit progress_updated(100) here - let the step counter handle it properly
 
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -965,17 +965,7 @@ class DataManagementWidget(QFrame):
         self.progress.setValue(0)
         layout.addWidget(self.progress)
 
-        # Final Report Section
-        report_group = QGroupBox("Final Report")
-        report_layout = QVBoxLayout(report_group)
-
-        self.final_report_text = QTextEdit()
-        self.final_report_text.setReadOnly(True)
-        self.final_report_text.setPlaceholderText("Final update report will appear here after completion...")
-        self.final_report_text.setMaximumHeight(150)
-        report_layout.addWidget(self.final_report_text)
-
-        layout.addWidget(report_group)
+    # (Final Report removed per request)
 
         # Live Logs
         logs_group = QGroupBox("Live Logs")
@@ -1026,8 +1016,8 @@ class DataManagementWidget(QFrame):
         self.run_now_btn.setEnabled(False)
         limit = int(self.limit_spin.value() or 0)
 
-        # Clear previous final report
-        self.final_report_text.clear()
+        # Clear previous logs (final report removed)
+        self.log_view.clear()
 
         # spawn a QThread to run the subprocess
         class SubprocRunner(QObject):
@@ -1145,18 +1135,9 @@ class DataManagementWidget(QFrame):
         completion_msg = f"Completed update for {n} tickers"
         self._append_log(completion_msg)
 
-        # Update final report
-        self.final_report_text.setPlainText(f"""📊 Daily Update Report
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Update completed successfully!
-📈 Tickers processed: {n}
-🕐 Completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-📁 Data location: data/bronze/daily/
-🔄 Next scheduled run: {self.next_run_label.text().replace('Next run: ', '')}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""")
+        # Log a summary to the live logs (Final Report UI was removed)
+        summary = f"📊 Daily Update Report - Completed: {n} tickers at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        self._append_log(summary)
 
         self.stop_btn.setEnabled(False)
         self.run_now_btn.setEnabled(True)
@@ -1772,12 +1753,15 @@ class MLWidget(QWidget):
 
         # Titles row - align configuration and progress titles
         titles_layout = QHBoxLayout()
+        # Reduce spacing and margins for a more compact header row
+        titles_layout.setContentsMargins(0, 2, 0, 2)
+        titles_layout.setSpacing(2)
         
         # Responsive font sizes - get QApplication from the import at top of file
         from PyQt6.QtWidgets import QApplication as QtApp
         screen = QtApp.primaryScreen()
         screen_height = screen.availableGeometry().height()
-        title_font_size = 10 if screen_height <= 768 else 12
+        title_font_size = 8 if screen_height <= 768 else 10
         
         config_title = QLabel("Pipeline Configuration")
         config_title.setFont(QFont("Arial", title_font_size, QFont.Weight.Bold))
@@ -1796,7 +1780,8 @@ class MLWidget(QWidget):
         config_frame.setFrameStyle(QFrame.Shape.Box)
         
         config_layout = QVBoxLayout(config_frame)
-        config_layout.setContentsMargins(10, 5, 10, 10)  # Reduced top margin
+        # Pull the config content up to reduce vertical gap under the titles
+        config_layout.setContentsMargins(6, 2, 6, 6)
         
         # Use form layout so labels are directly adjacent to controls
         from PyQt6.QtWidgets import QFormLayout
@@ -1805,34 +1790,64 @@ class MLWidget(QWidget):
         form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
 
         # Controls
+        # Put Holdout and Step on the same horizontal row
         self.holdout_spin = QSpinBox()
         self.holdout_spin.setRange(5, 250)
         self.holdout_spin.setValue(30)
         self.holdout_spin.setFixedWidth(80)
-        self.holdout_spin.setToolTip("Number of days to use for model performance testing.\nMore days = more accurate testing, but longer training time")
-        form.addRow(QLabel("Holdout days:"), self.holdout_spin)
+        self.holdout_spin.setToolTip(
+            "Number of days to use for model performance testing.\nMore days = more accurate testing, but longer training time"
+        )
 
         self.step_spin = QSpinBox()
         self.step_spin.setRange(1, 60)
         self.step_spin.setValue(5)
         self.step_spin.setFixedWidth(70)
-        self.step_spin.setToolTip("Time interval between each training point.\n1 = daily training, 5 = training every 5 days.\nMore frequent = more training points, but longer runtime")
-        form.addRow(QLabel("Step days:"), self.step_spin)
+        self.step_spin.setToolTip(
+            "Time interval between each training point.\n1 = daily training, 5 = training every 5 days.\nMore frequent = more training points, but longer runtime"
+        )
 
+        row1 = QWidget()
+        row1_h = QHBoxLayout(row1)
+        row1_h.setContentsMargins(0, 0, 0, 0)
+        row1_h.setSpacing(8)
+        row1_h.addWidget(QLabel("Holdout days:"))
+        row1_h.addWidget(self.holdout_spin)
+        row1_h.addSpacing(12)
+        row1_h.addWidget(QLabel("Step days:"))
+        row1_h.addWidget(self.step_spin)
+        row1_h.addStretch()
+        form.addRow(row1)
+
+        # Put Window and Lookback on the same horizontal row
         self.window_combo = QComboBox()
         self.window_combo.addItems(["expanding", "rolling"])
         self.window_combo.setCurrentText("expanding")
         self.window_combo.setFixedWidth(110)
-        self.window_combo.setToolTip("Training window expansion method:\n• expanding = all data up to current point\n• rolling = fixed window (requires lookback setting)")
-        form.addRow(QLabel("Window:"), self.window_combo)
+        self.window_combo.setToolTip(
+            "Training window expansion method:\n• expanding = all data up to current point\n• rolling = fixed window (requires lookback setting)"
+        )
 
         self.lookback_spin = QSpinBox()
         self.lookback_spin.setRange(50, 2000)
         self.lookback_spin.setValue(500)
         self.lookback_spin.setEnabled(False)
         self.lookback_spin.setFixedWidth(90)
-        self.lookback_spin.setToolTip("Number of days to use for training when window is rolling.\nOnly active when rolling window is selected")
-        form.addRow(QLabel("Lookback:"), self.lookback_spin)
+        self.lookback_spin.setToolTip(
+            "Number of days to use for training when window is rolling.\nOnly active when rolling window is selected"
+        )
+
+        row2 = QWidget()
+        row2_h = QHBoxLayout(row2)
+        row2_h.setContentsMargins(0, 0, 0, 0)
+        row2_h.setSpacing(8)
+        row2_h.addWidget(QLabel("Window:"))
+        row2_h.addWidget(self.window_combo)
+        row2_h.addSpacing(12)
+        row2_h.addWidget(QLabel("Lookback:"))
+        row2_h.addWidget(self.lookback_spin)
+        row2_h.addStretch()
+        form.addRow(row2)
 
         self.window_combo.currentTextChanged.connect(self._on_window_changed)
 
@@ -1882,6 +1897,33 @@ class MLWidget(QWidget):
 
         config_layout.addLayout(form)
 
+        # One Symbol Prediction small results table (placed directly under Pipeline Configuration)
+        one_symbol_frame = QFrame()
+        one_symbol_frame.setFrameStyle(QFrame.Shape.Box)
+        one_symbol_layout = QVBoxLayout(one_symbol_frame)
+        # Move the One Symbol title slightly up so the small table is more visible
+        one_symbol_layout.setContentsMargins(6, 0, 6, 6)
+        one_symbol_layout.setSpacing(3)
+
+        one_title = QLabel("One Symbol Prediction")
+        one_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        one_symbol_layout.addWidget(one_title)
+
+        # Small read-only table showing a single-symbol summary (Symbol, Signal, Day1, Day5, Day10)
+        from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+        self.one_symbol_table = QTableWidget()
+        self.one_symbol_table.setColumnCount(5)
+        self.one_symbol_table.setHorizontalHeaderLabels(["Symbol", "Signal", "Day1", "Day5", "Day10"])
+        self.one_symbol_table.setRowCount(1)
+        # Initialize empty cells
+        for c in range(5):
+            item = QTableWidgetItem("-")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.one_symbol_table.setItem(0, c, item)
+        self.one_symbol_table.setMaximumHeight(60)
+        one_symbol_layout.addWidget(self.one_symbol_table)
+        config_layout.addWidget(one_symbol_frame)
+
         # Pipeline Progress
         progress_frame = QFrame()
         progress_frame.setFrameStyle(QFrame.Shape.Box)
@@ -1928,7 +1970,7 @@ class MLWidget(QWidget):
         self.pipeline_step_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Responsive font size for step counter
-        step_font_size = 8 if screen_height <= 768 else 10
+        step_font_size = 7 if screen_height <= 768 else 9
         self.pipeline_step_label.setFont(QFont("Arial", step_font_size, QFont.Weight.Bold))
         progress_layout.addWidget(self.pipeline_step_label)
 
@@ -1995,7 +2037,7 @@ class MLWidget(QWidget):
         # Title
         title = QLabel("Machine Learning Training Center")
         title_font = QFont()
-        title_font.setPointSize(18)
+        title_font.setPointSize(16)
         title_font.setBold(True)
         title.setFont(title_font)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -2126,12 +2168,13 @@ class MLWidget(QWidget):
             # REMOVED: progress_bar and status_label removed as training buttons removed
             self.performance_widget.training_log.clear()
             
-            # Initialize step counter
+            # Initialize step counter - CORRECTED to actual implementation
             self.pipeline_step_counter = 0
-            # Calculate total steps more accurately based on actual pipeline flow:
-            # 1 (init config) + 1 (loading data) + 3 horizons * (1 setup + 1 feature building + 3 training loops) + 1 (save) + 1 (export) = 15 steps  
-            self.pipeline_total_steps = 2 + 3 * (1 + 1 + 3) + 2  # = 19 steps
+            # Actual steps that execute "completed":
+            # 1 (init config) + 1 (loading data) + 1 (feature building) + 6 (3 horizons × 2 each due to duplicate code) + 1 (save) + 1 (export) = 11 steps TOTAL
+            self.pipeline_total_steps = 11  # CORRECTED to match actual code execution
             self.pipeline_step_label.setText(f"Steps: 0/{self.pipeline_total_steps}")
+            self.performance_widget.add_log_entry(f"Pipeline initialized: {self.pipeline_total_steps} total steps")
             
             # Clear pipeline steps in data tab
             self.clear_pipeline_steps()
@@ -2149,11 +2192,23 @@ class MLWidget(QWidget):
 
     def on_pipeline_completed(self, summary: dict):
         """Handle completion of pipeline run."""
-        # Reset UI state
+        # Reset UI state and ensure step counter shows completion
         self.run_pipeline_btn.setEnabled(True)
         self.stop_pipeline_btn.setEnabled(False)
         self.pipeline_status_label.setText("Pipeline completed successfully")
+        
+        # Force completion - make sure step counter reaches 100%
+        if self.pipeline_step_counter < self.pipeline_total_steps:
+            self.pipeline_step_counter = self.pipeline_total_steps
+            self.pipeline_step_label.setText(f"Steps: {self.pipeline_step_counter}/{self.pipeline_total_steps}")
+            self.pipeline_progress_bar.setValue(100)
+        
         self.pipeline_progress_bar.setVisible(False)
+        
+        # Add completion notification
+        self.performance_widget.add_log_entry("🎉 PIPELINE COMPLETED SUCCESSFULLY!")
+        self.performance_widget.add_log_entry("="*50)
+        
         # Render compact metrics to table
         self.performance_widget.update_metrics(summary)
         

@@ -70,6 +70,12 @@ class MainWindow(QMainWindow):
         
         # Create tab widget
         self.tab_widget = QTabWidget()
+        # Make all tabs a uniform, reduced width so tab rectangles are shorter
+        # Adjust TAB_WIDTH to taste (in pixels)
+        TAB_WIDTH = 110
+        self.tab_widget.setStyleSheet(
+            f"QTabBar::tab {{ min-width: {TAB_WIDTH}px; max-width: {TAB_WIDTH}px; }}"
+        )
         main_layout.addWidget(self.tab_widget)
         
         # Create tabs
@@ -113,6 +119,10 @@ class MainWindow(QMainWindow):
         # Dashboard Tab
         self.dashboard_widget = DashboardWidget(None)  # Start with None, will be set when connected
         self.tab_widget.addTab(self.dashboard_widget, "📊 Dashboard")
+        # DATA Tab using dedicated DataWidget
+        from ui.widgets.data_widget import DataWidget
+        self.data_tab = DataWidget()
+        self.tab_widget.addTab(self.data_tab, "DATA")
         # AI Trading Tab (replaces Portfolio)
         self.ai_trading_widget = AiTradingWidget()
         # Provide AI service instance for scoring
