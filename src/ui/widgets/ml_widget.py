@@ -186,7 +186,9 @@ class PipelineRunWorker(QObject):
             self.status_updated.emit("Initializing pipeline config...")
             if self.ml_widget:
                 self.ml_widget.add_pipeline_step("Initialize Config", "running")
-            self.progress_updated.emit(2)
+            self.progress_updated.emit(5)  # Step 1/19 complete
+            # Force UI update
+            QApplication.processEvents()
 
             cfg = TrainingConfig()
             cfg.holdout_last_days = holdout
@@ -204,7 +206,9 @@ class PipelineRunWorker(QObject):
 
             # Load bronze data once at the beginning with progress updates
             self.status_updated.emit("Loading bronze data (Parquet) files...")
-            self.progress_updated.emit(5)
+            self.progress_updated.emit(10)  # Step 2/19 complete  
+            # Force UI update
+            QApplication.processEvents()
             
             # Progress callback for data loading
             def data_progress_callback(progress):
@@ -223,7 +227,9 @@ class PipelineRunWorker(QObject):
             if self.ml_widget:
                 self.ml_widget.add_pipeline_step("Loading Data", "completed")
                 self.ml_widget.update_data_progress(0)  # Hide data progress bar
-            self.progress_updated.emit(10)
+            self.progress_updated.emit(15)  # Data loading complete
+            # Force UI update
+            QApplication.processEvents()
 
             # תהליך לולאת fine tuning לכל הורייזן
             best_result = None
@@ -270,7 +276,17 @@ class PipelineRunWorker(QObject):
                     if self.ml_widget:
                         self.ml_widget.add_pipeline_step(f"Training Loop {loop+1}/{max_loops} (H{horizon})", "running")
                     self.status_updated.emit(f"Training loop {loop+1}/{max_loops} for horizon {horizon}")
-                    self.progress_updated.emit(20 + int(loop * 10 / max_loops))
+                    # More accurate progress calculation based on actual steps
+                    # Base: 2 steps (init+data) + current horizon progress
+                    base_steps = 2 + (horizon-1) * 5  # 5 steps per horizon (setup+features+3 training loops)
+                    current_step = base_steps + 2 + loop  # +2 for setup and features, +loop for current training
+                    current_progress = int((current_step / 19) * 100)  # 19 total steps
+                    self.progress_updated.emit(min(current_progress, 95))  # Cap at 95% until completion
+                    
+                    # Force UI update by processing events
+                    if self.ml_widget and hasattr(self.ml_widget, 'parent'):
+                        QApplication.processEvents()
+                    
                     results, preds, model_scores, confusions = walk_forward_run(
                         pooled, cfg, selected_models=models if models else ["RandomForest"]
                     )
@@ -389,7 +405,7 @@ class PipelineRunWorker(QObject):
                 self.status_updated.emit(f"Pipeline completed. Best horizon={best_result['horizon']} Quality={best_result['quality']:.3f} Scan matches={len(best_result['scan_results'])}")
             else:
                 self.status_updated.emit("Pipeline completed, but no best result identified")
-            self.progress_updated.emit(100)
+            self.progress_updated.emit(100)  # Pipeline fully complete
 
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -1862,8 +1878,13 @@ class MLWidget(QWidget):
         
         self.pipeline_progress_details = QTextEdit()
         self.pipeline_progress_details.setMinimumHeight(300)  # Increased height
+        self.pipeline_progress_details.setMaximumHeight(400)  # Set max height for better responsiveness
         self.pipeline_progress_details.setReadOnly(True)
         self.pipeline_progress_details.setPlainText("Ready to run pipeline...")
+        # Improve scroll behavior
+        self.pipeline_progress_details.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.pipeline_progress_details.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.pipeline_progress_details.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         progress_layout.addWidget(self.pipeline_progress_details)
 
         # Create horizontal layout for configuration and progress frames
@@ -2020,8 +2041,9 @@ class MLWidget(QWidget):
             
             # Initialize step counter
             self.pipeline_step_counter = 0
-            # Calculate total steps: 1 (init) + 3 horizons * (1 setup + 1 data + 1 features + 5 training + 1 complete) + 2 (save/export) = 1 + 3*9 + 2 = 30
-            self.pipeline_total_steps = 1 + 3 * (1 + 1 + 1 + 5 + 1) + 2  # = 30 steps
+            # Calculate total steps more accurately based on actual pipeline flow:
+            # 1 (init config) + 1 (loading data) + 3 horizons * (1 setup + 1 feature building + 3 training loops) + 1 (save) + 1 (export) = 15 steps  
+            self.pipeline_total_steps = 2 + 3 * (1 + 1 + 3) + 2  # = 19 steps
             self.pipeline_step_label.setText(f"Steps: 0/{self.pipeline_total_steps}")
             
             # Clear pipeline steps in data tab
@@ -2226,11 +2248,17 @@ Full report saved to data/silver/reports/"""
     
     def update_progress(self, progress: int):
         """Update training progress"""
-        # REMOVED: progress_bar removed as training buttons removed
-        # Update pipeline progress bar
+        # Update pipeline progress bar with more accurate calculation
         if progress > 0:
             self.pipeline_progress_bar.setVisible(True)
-            self.pipeline_progress_bar.setValue(progress)
+            # Ensure progress doesn't exceed 100% and matches step counter
+            if self.pipeline_total_steps > 0:
+                calculated_progress = min(100, int((self.pipeline_step_counter / self.pipeline_total_steps) * 100))
+                # Use the higher of received progress or calculated progress for smoother updates
+                actual_progress = max(progress, calculated_progress)
+                self.pipeline_progress_bar.setValue(actual_progress)
+            else:
+                self.pipeline_progress_bar.setValue(progress)
         else:
             self.pipeline_progress_bar.setVisible(False)
     
@@ -2287,10 +2315,14 @@ Full report saved to data/silver/reports/"""
             lines = lines[-20:]
         
         self.pipeline_progress_details.setPlainText('\n'.join(lines))
-        # Auto scroll to bottom
+        # Auto scroll to bottom with immediate UI update
         cursor = self.pipeline_progress_details.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.pipeline_progress_details.setTextCursor(cursor)
+        self.pipeline_progress_details.ensureCursorVisible()
+        
+        # Force immediate UI update
+        QApplication.processEvents()
     
     def clear_pipeline_steps(self):
         """Clear all pipeline steps"""
