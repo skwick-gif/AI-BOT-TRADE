@@ -276,12 +276,8 @@ class PipelineRunWorker(QObject):
                     if self.ml_widget:
                         self.ml_widget.add_pipeline_step(f"Training Loop {loop+1}/{max_loops} (H{horizon})", "running")
                     self.status_updated.emit(f"Training loop {loop+1}/{max_loops} for horizon {horizon}")
-                    # More accurate progress calculation based on actual steps
-                    # Base: 2 steps (init+data) + current horizon progress
-                    base_steps = 2 + (horizon-1) * 5  # 5 steps per horizon (setup+features+3 training loops)
-                    current_step = base_steps + 2 + loop  # +2 for setup and features, +loop for current training
-                    current_progress = int((current_step / 19) * 100)  # 19 total steps
-                    self.progress_updated.emit(min(current_progress, 95))  # Cap at 95% until completion
+                    # Let the step counter handle progress calculation automatically
+                    # The progress will be updated when steps are marked as completed
                     
                     # Force UI update by processing events
                     if self.ml_widget and hasattr(self.ml_widget, 'parent'):
@@ -592,9 +588,50 @@ class ModelPerformanceWidget(QFrame):
         self.preds_table.setRowCount(len(df))
         self.preds_table.setColumnCount(len(cols))
         self.preds_table.setHorizontalHeaderLabels(cols)
-        for i, row in df.iterrows():
+        
+        # Enhanced display with colors and symbols
+        from PyQt6.QtGui import QColor
+        
+        for i, (idx, row) in enumerate(df.iterrows()):
             for j, col in enumerate(cols):
-                self.preds_table.setItem(i, j, QTableWidgetItem(str(row.get(col, ""))))
+                value = str(row.get(col, ""))
+                
+                # Enhanced display for predictions
+                if col == 'y_pred':
+                    if value.upper() == 'UP':
+                        value = "🟢 BUY"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(200, 255, 200))  # Light green
+                    elif value.upper() == 'DOWN':
+                        value = "🔴 SELL"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(255, 200, 200))  # Light red
+                    else:
+                        value = "🟡 HOLD"
+                        item = QTableWidgetItem(value)
+                        item.setBackground(QColor(255, 255, 200))  # Light yellow
+                elif col == 'confidence':
+                    try:
+                        conf_val = float(value)
+                        item = QTableWidgetItem(f"{conf_val:.1%}")
+                        if conf_val > 0.7:
+                            item.setBackground(QColor(200, 255, 200))  # High confidence - green
+                        elif conf_val > 0.5:
+                            item.setBackground(QColor(255, 255, 200))  # Medium confidence - yellow
+                        else:
+                            item.setBackground(QColor(255, 230, 230))  # Low confidence - light red
+                    except:
+                        item = QTableWidgetItem(value)
+                elif col == 'price_target':
+                    try:
+                        price_val = float(value)
+                        item = QTableWidgetItem(f"${price_val:.2f}")
+                    except:
+                        item = QTableWidgetItem(value)
+                else:
+                    item = QTableWidgetItem(value)
+                
+                self.preds_table.setItem(i, j, item)
     
     def add_log_entry(self, message: str):
         """Add entry to training log"""
@@ -2176,15 +2213,23 @@ class MLWidget(QWidget):
             overall_signal = max(signal_scores.keys(), key=lambda k: signal_scores[k])
             overall_confidence = signal_scores[overall_signal] / len(signals) if signals else 0
             
-            # Display overall recommendation
+            # Display overall recommendation with enhanced formatting
             signal_emoji = {"BUY": "🟢", "SELL": "🔴", "HOLD": "🟡"}
-            report_lines.append(f"📊 OVERALL RECOMMENDATION: {signal_emoji.get(overall_signal, '⚪')} {overall_signal}")
-            report_lines.append(f"🎯 Confidence: {overall_confidence:.1%}")
+            signal_desc = {"BUY": "BUY (Expected to go UP)", "SELL": "SELL (Expected to go DOWN)", "HOLD": "HOLD (Sideways movement)"}
+            
+            report_lines.append(f"📊 OVERALL RECOMMENDATION:")
+            report_lines.append(f"    {signal_emoji.get(overall_signal, '⚪')} {overall_signal} - {signal_desc.get(overall_signal, 'No clear direction')}")
+            report_lines.append(f"    🎯 Confidence Level: {overall_confidence:.1%}")
+            
+            # Risk assessment
+            risk_level = "LOW" if overall_confidence > 0.7 else "MEDIUM" if overall_confidence > 0.5 else "HIGH"
+            risk_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}
+            report_lines.append(f"    ⚠️ Risk Assessment: {risk_emoji.get(risk_level)} {risk_level} RISK")
             report_lines.append("")
             
-            # Detailed predictions by horizon
-            report_lines.append("📈 PRICE TARGETS BY HORIZON:")
-            report_lines.append("-" * 40)
+            # Detailed predictions by horizon with enhanced formatting
+            report_lines.append("📈 DETAILED PRICE TARGETS & SIGNALS:")
+            report_lines.append("=" * 50)
             
             for h in [1, 5, 10]:
                 if h in price_targets:
@@ -2194,7 +2239,21 @@ class MLWidget(QWidget):
                         change_symbol = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡️"
                         signal_info = next((s for s in signals if s[0] == h), (h, 'HOLD', 0.5))
                         
-                        report_lines.append(f"{h:2d} Days: ${target:6.2f} ({change_pct:+5.1f}%) {change_symbol} [{signal_info[1]}] conf:{signal_info[2]:.1%}")
+                        # Enhanced signal mapping
+                        signal_text = signal_info[1]
+                        if signal_text == 'UP':
+                            signal_text = 'BUY'
+                        elif signal_text == 'DOWN':
+                            signal_text = 'SELL'
+                        
+                        # Color-coded confidence levels
+                        conf_level = "HIGH" if signal_info[2] > 0.7 else "MED" if signal_info[2] > 0.5 else "LOW"
+                        
+                        report_lines.append(f"📅 {h:2d}-Day Horizon:")
+                        report_lines.append(f"   🎯 Target Price: ${target:7.2f}")
+                        report_lines.append(f"   📊 Expected Change: {change_pct:+6.1f}% {change_symbol}")
+                        report_lines.append(f"   🔔 Signal: {signal_text} (Confidence: {signal_info[2]:.1%} - {conf_level})")
+                        report_lines.append("")
             
             report_lines.append("")
             report_lines.append("=" * 60)
@@ -2283,6 +2342,10 @@ Full report saved to data/silver/reports/"""
         if status == "completed":
             self.pipeline_step_counter += 1
             self.pipeline_step_label.setText(f"Steps: {self.pipeline_step_counter}/{self.pipeline_total_steps}")
+            # Update progress bar to match step counter
+            if self.pipeline_total_steps > 0:
+                progress_pct = int((self.pipeline_step_counter / self.pipeline_total_steps) * 100)
+                self.pipeline_progress_bar.setValue(min(progress_pct, 100))
         
         current_text = self.pipeline_progress_details.toPlainText()
         lines = current_text.split('\n') if current_text != "Ready to run pipeline..." else []
