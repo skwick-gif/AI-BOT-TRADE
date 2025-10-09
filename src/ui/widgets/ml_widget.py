@@ -168,6 +168,9 @@ class PipelineRunWorker(QObject):
             self.error_occurred.emit("Pipeline is already running")
             return
         try:
+            # Import Path at the beginning of the method
+            from pathlib import Path
+            
             self.is_running = True
             print("PipelineRunWorker: Starting pipeline execution")
             p = params or {}
