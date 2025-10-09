@@ -2108,6 +2108,7 @@ class MLWidget(QWidget):
             
             # Current price (from latest available data)
             latest_data = None
+            current_price = 0.0  # Initialize with default value
             for h in horizons:
                 if h in preds_data:
                     latest_data = preds_data[h]
@@ -2116,6 +2117,9 @@ class MLWidget(QWidget):
             if latest_data is not None:
                 current_price = float(latest_data.get('adj_close', latest_data.get('close', 0)))
                 report_lines.append(f"💲 Current Price: ${current_price:.2f}")
+                report_lines.append("")
+            else:
+                report_lines.append("⚠️ No current price data available")
                 report_lines.append("")
             
             # Trading signals and price targets
@@ -2127,7 +2131,7 @@ class MLWidget(QWidget):
                     pred = preds_data[h]
                     signal = str(pred.get('y_pred', 'HOLD')).upper()
                     confidence = float(pred.get('confidence', 0.5))
-                    price_target = float(pred.get('price_target', current_price if latest_data else 0))
+                    price_target = float(pred.get('price_target', current_price))
                     
                     signals.append((h, signal, confidence))
                     price_targets[h] = price_target

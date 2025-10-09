@@ -349,9 +349,15 @@ Always remind users about risk management and due diligence."""
                 ctx_txt = ""
 
         prompt = (
-            f"You are an AI trader scoring a trading opportunity for symbol '{symbol}'. "
-            f"{strat_txt} Return ONLY JSON with keys score (0-10), action (BUY/SELL/HOLD), reason (short). "
-            f"Do not include any commentary outside JSON. {ctx_txt}"
+            f"You are an AI financial analyst specialized in short-term equity trading.\n\n"
+            f"Analyze stock symbol \"{symbol}\" based on the latest market and sentiment data (provided separately).\n"
+            f"Forecast the expected 7-day price movement.\n\n"
+            f"Return **only valid JSON** — no text, no markdown, no explanations.\n\n"
+            f"Output format:\n"
+            f"{{\n"
+            f"  \"score\": <integer 0–10>, \n"
+            f"  \"price_target\": <float, USD>\n"
+            f"}}"
         )
 
         # call API
@@ -375,25 +381,20 @@ Always remind users about risk management and due diligence."""
                     score = float(num.group(1)) if num else 5.0
                 except Exception:
                     score = 5.0
-                obj = {"score": score, "action": "HOLD", "reason": text[:120]}
+                obj = {"score": score, "price_target": None}
 
         # normalize fields
         score = float(obj.get("score", 5.0))
-        action = str(obj.get("action", "HOLD")).upper()
-        reason = str(obj.get("reason", ""))
+        price_target = obj.get("price_target", None)
 
-        # enforce thresholds consistency if provided
-        if strategy:
-            bt = float(strategy.get("buy_threshold", 8.0))
-            st = float(strategy.get("sell_threshold", 4.0))
-            if score >= bt:
-                action = "BUY"
-            elif score <= st:
-                action = "SELL"
-            else:
-                action = "HOLD"
+        # Try to convert price_target to float if it exists
+        if price_target is not None:
+            try:
+                price_target = float(price_target)
+            except (ValueError, TypeError):
+                price_target = None
 
-        return {"score": score, "action": action, "reason": reason}
+        return {"score": score, "price_target": price_target}
 
     def score_symbol_numeric_sync(self, symbol: str, *, timeout: float = 8.0, market_context: Optional[Dict[str, Any]] = None, profile: Optional[str] = None, thresholds: Optional[Dict[str, float]] = None) -> float:
         """Return ONLY a numeric score 0-10 for symbol using a minimal prompt (synchronous HTTP).
