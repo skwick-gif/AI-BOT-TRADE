@@ -2184,8 +2184,7 @@ class MLWidget(QWidget):
             
             # Show popup with summary
             from PyQt6.QtWidgets import QMessageBox
-            summary_msg = f"""
-🎯 TRADING REPORT FOR {ticker}
+            summary_msg = f"""🎯 TRADING REPORT FOR {ticker}
 
 💲 Current Price: ${current_price:.2f}
 
@@ -2193,14 +2192,13 @@ class MLWidget(QWidget):
 🎯 Confidence: {overall_confidence:.1%}
 
 📈 PRICE TARGETS:
-• 1 Day:  ${price_targets.get(1, 0):.2f}
-• 5 Days: ${price_targets.get(5, 0):.2f}  
-• 10 Days: ${price_targets.get(10, 0):.2f}
+- 1 Day:  ${price_targets.get(1, 0):.2f}
+- 5 Days: ${price_targets.get(5, 0):.2f}
+- 10 Days: ${price_targets.get(10, 0):.2f}
 
-Report saved to data/silver/reports/
-            """
+Full report saved to data/silver/reports/"""
             
-            QMessageBox.information(self, f"Trading Report - {ticker}", summary_msg.strip())
+            QMessageBox.information(self, f"Trading Report - {ticker}", summary_msg)
             
         except Exception as e:
             self.performance_widget.add_log_entry(f"Error generating single stock report: {e}")
