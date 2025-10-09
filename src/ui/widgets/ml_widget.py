@@ -1730,8 +1730,7 @@ class MLWidget(QWidget):
         # Setup UI
         self.setup_ui()
         
-        # Now that data_management_widget exists, update pipeline worker
-        self.pipeline_worker.data_widget = self.data_management_widget
+    # No ML-level data_management_widget in this refactor; pipeline worker has no data_widget reference
         self.pipeline_worker.ml_widget = self
         
         self.logger.info("ML widget initialized")
@@ -2046,9 +2045,7 @@ class MLWidget(QWidget):
         # Create tab widget
         self.tab_widget = QTabWidget()
         
-        # Data Management Tab
-        self.data_management_widget = DataManagementWidget()
-        self.tab_widget.addTab(self.data_management_widget, "💾 Data")
+    # Data Management Tab removed from ML widget (moved to top-level DATA tab)
         
         # Pipeline Tab
         self.pipeline_widget = self.create_pipeline_tab()
