@@ -1,0 +1,44 @@
+{
+  "prompts": [
+    {
+      "id": "ml_single_symbol_7d",
+      "name": "Single symbol: 7-day finance prediction (JSON)",
+      "description": "Precise 7-day price prediction prompt used by the ML single-symbol Ask-AI flow. Returns JSON only.",
+      "prompt": "You are a  professional financial analyst. Provide a precise 7-day price prediction for {{ticker}} by analyzing ALL of the following factors: current financial metrics, recent earnings/guidance, upcoming earnings or corporate events (if any), overall market sentiment (VIX, fear/greed index), sector performance, trading volume patterns, analyst ratings and forecasts, insider trading activity, options flow (including short interest and put/call ratio), technical indicators, macroeconomic events, regulatory or legislative changes, ESG scores, global geopolitical events, patent filings and major product launches, and any relevant news or catalysts. If no significant upcoming events exist, focus on current market dynamics and seasonal effects.\n\nReturn only valid JSON — no text, no markdown, no explanations.\n\nOutput format: { \"score\": <integer 0–10>, \"price_target\": <float, USD> }",
+      "model": "sonar",
+      "used_by": [
+        "src/ui/widgets/ml_widget.py:_build_generic_prompt",
+        "scripts/test_direct_auto_ai.py"
+      ],
+      "meta": { "last_modified": "2025-10-10T00:00:00Z", "author": "dev", "version": 1 },
+      "locked": false
+    },
+    {
+      "id": "numeric_score_template",
+      "name": "Numeric score 0-10 (compact)",
+      "description": "Compact numeric-only scoring prompt builder used by scanner and numeric scoring helpers.",
+      "prompt": "Score the opportunity for '{{symbol}}' on a 0-10 scale {{focus}} {{threshold_line}} Output ONLY the number (0-10). No text, no code, no units.",
+      "model": "sonar",
+      "used_by": [
+        "src/services/prompt_builder.py:build_numeric_score_prompt",
+        "src/services/ai_service.py:score_symbol_numeric_sync",
+        "src/ui/widgets/ai_trading_widget.py:_test_custom_prompt"
+      ],
+      "meta": { "last_modified": "2025-10-10T00:00:00Z", "author": "dev", "version": 1 },
+      "locked": false
+    },
+    {
+      "id": "ai_trading_custom_template",
+      "name": "AI Trading custom numeric template",
+      "description": "Recommended numeric-only template inserted by the AI Trading Settings 'Insert template' button.",
+      "prompt": "Score the opportunity for '{symbol}' on a 0-10 scale for {profile} trading horizon. Focus on price action, momentum, and near-term catalysts. Calibrate internally with thresholds BUY≥{buy} and SELL≤{sell}, but output ONLY the number (0-10). No text, no code, no units.",
+      "model": "sonar",
+      "used_by": [
+        "src/ui/widgets/ai_trading_widget.py:_insert_recommended_prompt",
+        "src/core/ai_trading_config.py:custom_prompt"
+      ],
+      "meta": { "last_modified": "2025-10-10T00:00:00Z", "author": "dev", "version": 1 },
+      "locked": false
+    }
+  ]
+}
