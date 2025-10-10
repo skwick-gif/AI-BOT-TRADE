@@ -541,26 +541,34 @@ class WatchlistTable(QTableWidget):
             # Find the reference date or closest date before it
             ref_date = pd.to_datetime(reference_date)
             
-            # Get the most recent available data as reference
+            # Get the most recent available data
             df_filtered = df[df['date'] <= ref_date]
             if df_filtered.empty:
                 df_filtered = df.tail(1)
             ref_row = df_filtered.iloc[-1]
             ref_price = ref_row.get('close', ref_row.get('adj_close', 0))
             
+            # Check if the stock was added after the latest available data
+            latest_data_date = df['date'].max()
+            stock_added_after_data = ref_date > latest_data_date
+            
             # Calculate progression: show 7 days starting from reference date forward
             daily_data = {}
             for i in range(1, 8):  # Days 1-7 (reference date + (i-1) days)
-                target_date = ref_date + timedelta(days=i-1)  # Day 1 = ref_date, Day 2 = ref_date + 1, etc.
-                # Find the closest available date on or before target_date
-                available_data = df[df['date'] <= target_date]
-                if not available_data.empty:
-                    # Get the most recent available date
-                    closest_row = available_data.iloc[-1]
-                    price = closest_row['close'] if 'close' in closest_row.index else closest_row.get('adj_close', 0)
-                    daily_data[f'day_{i}'] = price
-                else:
+                if stock_added_after_data and i > 1:
+                    # If stock was added after latest data, only show day 1
                     daily_data[f'day_{i}'] = None
+                else:
+                    target_date = ref_date + timedelta(days=i-1)  # Day 1 = ref_date, Day 2 = ref_date + 1, etc.
+                    # Find the closest available date on or before target_date
+                    available_data = df[df['date'] <= target_date]
+                    if not available_data.empty:
+                        # Get the most recent available date
+                        closest_row = available_data.iloc[-1]
+                        price = closest_row['close'] if 'close' in closest_row.index else closest_row.get('adj_close', 0)
+                        daily_data[f'day_{i}'] = price
+                    else:
+                        daily_data[f'day_{i}'] = None
             
             return {
                 'price': ref_price,  # Use reference price as current price
