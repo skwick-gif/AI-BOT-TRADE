@@ -124,8 +124,8 @@ class MacroIndicatorCard(QFrame):
     def setup_ui(self, data):
         """Setup the indicator card UI"""
         self.setFrameStyle(QFrame.Shape.Box)
-        self.setFixedHeight(100)
-        self.setMinimumWidth(200)
+        self.setFixedHeight(80)
+        self.setMinimumWidth(150)
         self.setStyleSheet("""
             QFrame {
                 background-color: #2b2b2b;
@@ -141,14 +141,14 @@ class MacroIndicatorCard(QFrame):
         """)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(5)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
         
         # Title
         title = QLabel(data['name'])
         title_font = QFont()
         title_font.setBold(True)
-        title_font.setPointSize(11)
+        title_font.setPointSize(10)
         title.setFont(title_font)
         layout.addWidget(title)
         
@@ -157,7 +157,7 @@ class MacroIndicatorCard(QFrame):
             value_text = f"{data['value']:.2f} {data['units']}"
             value_label = QLabel(value_text)
             value_font = QFont()
-            value_font.setPointSize(13)
+            value_font.setPointSize(12)
             value_font.setBold(True)
             value_label.setFont(value_font)
             value_label.setStyleSheet("color: #4CAF50;")
@@ -165,7 +165,7 @@ class MacroIndicatorCard(QFrame):
             
             # Date
             date_label = QLabel(f"As of {data['date']}")
-            date_label.setStyleSheet("color: #888888; font-size: 9px;")
+            date_label.setStyleSheet("color: #888888; font-size: 8px;")
             layout.addWidget(date_label)
             
         else:
@@ -203,8 +203,8 @@ class MacroWidget(QWidget):
     def setup_ui(self):
         """Setup the main UI"""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(10)
         
         # Title
         title = QLabel("📈 Macroeconomic Indicators")
@@ -236,7 +236,7 @@ class MacroWidget(QWidget):
         # Container for indicator cards
         self.indicators_container = QWidget()
         self.indicators_layout = QGridLayout(self.indicators_container)
-        self.indicators_layout.setSpacing(10)
+        self.indicators_layout.setSpacing(8)
         
         main_layout.addWidget(self.indicators_container)
         
