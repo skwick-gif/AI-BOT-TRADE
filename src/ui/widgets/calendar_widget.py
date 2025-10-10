@@ -9,77 +9,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QDialog, QTextEdit, QMessageBox, QCheckBox, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
-from PyQt6.QtGui import QFont
-
-from utils.logger import get_logger
-from services.finnhub_client import (
-    fetch_earnings_calendar,
-    fetch_dividends,
-    fetch_economic_calendar,
-    fetch_ipo_calendar,
-)
-from utils.trading_helpers import get_portfolio_positions
-from services.sentiment_service import aggregate_symbol_sentiment
-from services.earnings_ml import predict_half_day_direction, train_symbol_model, load_saved_model
-
-
-class _CalendarFetchThread(QThread):
-    """Worker thread to fetch events from Finnhub to keep UI responsive."""
-    data_ready = pyqtSignal(list)
-    error = pyqtSignal(str)
-
-    def __init__(
-        self,
-        api_key: str,
-        start_date: str,
-        end_date: str,
-        symbols: list[str],
-        include_earnings: bool = True,
-        include_dividends: bool = True,
-        include_economic: bool = True,
-        include_ipo: bool = True,
-    ):
-        super().__init__()
-        self.api_key = api_key
-        self.start_date = start_date
-        self.end_date = end_date
-        self.symbols = symbols
-        self.include_earnings = include_earnings
-        self.include_dividends = include_dividends
-        self.include_economic = include_economic
-        self.include_ipo = include_ipo
-
-    def run(self):
-        try:
-            events = []
-            # Earnings
-            if self.include_earnings:
-                events.extend(fetch_earnings_calendar(self.api_key, self.start_date, self.end_date, self.symbols))
-            # Dividends
-            if self.include_dividends:
-                events.extend(fetch_dividends(self.api_key, self.start_date, self.end_date, self.symbols))
-            # Economic (may be empty if not in plan)
-            if self.include_economic:
-                events.extend(fetch_economic_calendar(self.api_key, self.start_date, self.end_date))
-            # IPOs (US only)
-            if self.include_ipo:
-                events.extend(fetch_ipo_calendar(self.api_key, self.start_date, self.end_date, us_only=True))
-            self.data_ready.emit(events)
-        except Exception as e:
-            self.error.emit(str(e))
-
-"""
-Calendar Widget
-Simple calendar display with a placeholder for upcoming events.
-"""
-
-import os
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QCalendarWidget, QPushButton,
-    QListWidget, QListWidgetItem, QDialog, QTextEdit, QMessageBox, QCheckBox, QSpinBox, QDoubleSpinBox
-)
-from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QTextCharFormat, QColor
 
 from utils.logger import get_logger
 from services.finnhub_client import (
@@ -291,10 +221,53 @@ class CalendarWidget(QFrame):
             self.status_label.setText("Done.")
             return
 
-        # Build a list with items and store event payload
+        # Clear previous date highlighting by resetting all formats
+        # Note: QCalendarWidget doesn't have a direct way to clear all formats,
+        # but we can set an empty format for all known dates (not practical)
+        # For now, we'll just overwrite with new highlights
+
+        # Collect dates with events for highlighting
+        event_dates = set()
         BIG_MOVERS = {"AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","BRK.B","BRK.A","JPM","JNJ"}
         for ev in events:
             src = ev.get("_source", "")
+            date_str = ""
+            if src == "earnings":
+                date_str = ev.get("date") or ev.get("time") or ""
+            elif src == "dividend":
+                date_str = ev.get("payDate") or ev.get("recordDate") or ev.get("exDate") or ""
+            elif src == "economic":
+                date_str = ev.get("time") or ev.get("date") or ""
+            elif src == "ipo":
+                date_str = ev.get("date") or ev.get("ipoDate") or ev.get("time") or ""
+            
+            if date_str:
+                try:
+                    from datetime import datetime as _dt
+                    parsed = None
+                    try:
+                        parsed = _dt.fromisoformat(str(date_str))
+                    except Exception:
+                        try:
+                            parsed = _dt.strptime(str(date_str), "%Y-%m-%d")
+                        except Exception:
+                            parsed = None
+                    if parsed:
+                        event_dates.add(parsed.date())
+                except Exception:
+                    pass
+
+        # Highlight dates with events
+        highlight_format = QTextCharFormat()
+        highlight_format.setBackground(QColor("#4CAF50"))  # Green background
+        highlight_format.setForeground(QColor("white"))   # White text
+        for event_date in event_dates:
+            qdate = QDate(event_date.year, event_date.month, event_date.day)
+            self.calendar.setDateTextFormat(qdate, highlight_format)
+
+        # Build a list with items and store event payload
+        BIG_MOVERS = {"AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","BRK.B","BRK.A","JPM","JNJ"}
+        for ev in events:
             if src == "earnings":
                 symbol = ev.get("symbol") or ev.get("ticker") or "?"
                 date = ev.get("date") or ev.get("time") or ""
