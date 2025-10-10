@@ -554,9 +554,12 @@ class WatchlistTable(QTableWidget):
             daily_data = {}
             for i in range(1, 8):  # Days 1-7 (most recent to oldest)
                 target_date = ref_date - timedelta(days=i)
-                day_data = df[df['date'] == target_date]
-                if not day_data.empty:
-                    price = day_data.iloc[0]['close'] if 'close' in day_data.columns else day_data.iloc[0].get('adj_close', 0)
+                # Find the closest available date on or before target_date
+                available_data = df[df['date'] <= target_date]
+                if not available_data.empty:
+                    # Get the most recent available date
+                    closest_row = available_data.iloc[-1]
+                    price = closest_row['close'] if 'close' in closest_row.index else closest_row.get('adj_close', 0)
                     daily_data[f'day_{i}'] = price
                 else:
                     daily_data[f'day_{i}'] = None
@@ -619,17 +622,26 @@ class WatchlistTable(QTableWidget):
                 if data['price'] > 0:
                     pct_change = ((day_price - data['price']) / data['price']) * 100
                     text = f"${day_price:.2f}\n({pct_change:+.1f}%)"
-                    color = QColor(0, 150, 0) if pct_change >= 0 else QColor(200, 0, 0)
+                    if pct_change >= 0:
+                        color = QColor(0, 150, 0)
+                        font = QFont()
+                    else:
+                        color = QColor(255, 0, 0)  # Brighter red
+                        font = QFont()
+                        font.setBold(True)  # Make negative changes bold
                 else:
                     text = f"${day_price:.2f}"
                     color = QColor(0, 0, 0)
+                    font = QFont()
             else:
                 text = "-"
                 color = QColor(100, 100, 100)
+                font = QFont()
                 
             item = QTableWidgetItem(text)
             item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
             item.setForeground(color)
+            item.setFont(font)
             self.setItem(row, col_index, item)
         
         # Store data for future reference
