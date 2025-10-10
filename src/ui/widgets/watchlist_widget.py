@@ -548,14 +548,17 @@ class WatchlistTable(QTableWidget):
             ref_row = df_filtered.iloc[-1]
             ref_price = ref_row.get('close', ref_row.get('adj_close', 0))
             
-            # Check if there are data points after the reference date
-            has_future_data = not df[df['date'] > ref_date].empty
+            # Check how many days of data are available after the reference date
+            future_data = df[df['date'] > ref_date]
+            available_future_days = len(future_data)
             
-            # Calculate progression: show 7 days starting from reference date forward
+            # Calculate progression: show day 1 (reference date) + available future days, up to 7 total days
             daily_data = {}
-            for i in range(1, 8):  # Days 1-7 (reference date + (i-1) days)
-                if not has_future_data and i > 1:
-                    # If no data after reference date, only show day 1
+            max_days = min(7, 1 + available_future_days)  # Day 1 + future days
+            
+            for i in range(1, 8):  # Days 1-7
+                if i > max_days:
+                    # No more data available
                     daily_data[f'day_{i}'] = None
                 else:
                     target_date = ref_date + timedelta(days=i-1)  # Day 1 = ref_date, Day 2 = ref_date + 1, etc.
