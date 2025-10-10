@@ -44,7 +44,7 @@ class WatchlistTable(QTableWidget):
     def setup_ui(self):
         headers = [
             "Symbol", "נוסף בתאריך", "Price", "Volume",
-            "יום -1", "יום -2", "יום -3", "יום -4", "יום -5", "יום -6", "יום -7",
+            "יום 1", "יום 2", "יום 3", "יום 4", "יום 5", "יום 6", "יום 7",
             "AI Rating", "AI Prediction", "Stop Loss", "Signal", "Sharpe Ratio", "Tools"
         ]
         self.setColumnCount(len(headers))
@@ -547,13 +547,15 @@ class WatchlistTable(QTableWidget):
                 df_filtered = df.tail(1)
                 ref_date = df_filtered.iloc[0]['date']
             
-            # Get the latest data point from the filtered data
-            latest_row = df_filtered.iloc[-1]
+            # Get the reference data point (most recent available)
+            ref_row = df_filtered.iloc[-1]
+            ref_price = ref_row.get('close', ref_row.get('adj_close', 0))
             
-            # Calculate historical progression: show last 7 days ending at reference date
+            # Calculate progression: show 7 days leading up to reference date (chronological order)
             daily_data = {}
-            for i in range(1, 8):  # Days 1-7 (most recent to oldest)
-                target_date = ref_date - timedelta(days=i)
+            for i in range(1, 8):  # Days 1-7 (oldest to newest)
+                days_back = 7 - i  # Day 1 = ref_date - 6 days, Day 7 = ref_date
+                target_date = ref_date - timedelta(days=days_back)
                 # Find the closest available date on or before target_date
                 available_data = df[df['date'] <= target_date]
                 if not available_data.empty:
@@ -565,8 +567,8 @@ class WatchlistTable(QTableWidget):
                     daily_data[f'day_{i}'] = None
             
             return {
-                'price': latest_row.get('close', latest_row.get('adj_close', 0)),
-                'volume': latest_row.get('volume', 0),
+                'price': ref_price,  # Use reference price as current price
+                'volume': ref_row.get('volume', 0),
                 'daily_progression': daily_data,
                 'reference_date': reference_date
             }
