@@ -14,6 +14,8 @@ import json
 from datetime import datetime, time as dtime
 
 from services.data_update_service import DataUpdateService
+import pandas as pd
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
 
 
 class DataWidget(QWidget):
@@ -46,8 +48,177 @@ class DataWidget(QWidget):
         rlabel.setWordWrap(True)
         rlayout.addWidget(rlabel)
 
+        # Controls for scanning data files
+        ctrl_layout = QHBoxLayout()
+        self.scan_btn = QPushButton("🔎 Scan Data Files")
+        self.scan_btn.clicked.connect(self._on_run_report_scan)
+        ctrl_layout.addWidget(self.scan_btn)
+
+        self.scan_stop_btn = QPushButton("⏹️ Stop Scan")
+        self.scan_stop_btn.setEnabled(False)
+        self.scan_stop_btn.clicked.connect(self._on_stop_report_scan)
+        ctrl_layout.addWidget(self.scan_stop_btn)
+
+        ctrl_layout.addStretch()
+        rlayout.addLayout(ctrl_layout)
+
+        # Progress and results
+        self.report_progress = QProgressBar()
+        self.report_progress.setRange(0, 100)
+        self.report_progress.setValue(0)
+        rlayout.addWidget(self.report_progress)
+
+        self.report_log = QTextEdit()
+        self.report_log.setReadOnly(True)
+        self.report_log.setPlaceholderText("Scan output will appear here...")
+        self.report_log.setMinimumHeight(160)
+        rlayout.addWidget(self.report_log)
+
+        # Simple results table: ticker, last_date, rows
+        self.report_table = QTableWidget()
+        self.report_table.setColumnCount(3)
+        self.report_table.setHorizontalHeaderLabels(["Ticker", "Last Date", "Rows"])
+        self.report_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        rlayout.addWidget(self.report_table)
+
         self.tabs.addTab(self.daily_update_tab, "🗓️ Daily Update")
         self.tabs.addTab(self.report_viewer_tab, "📋 Report Viewer")
+
+        # scanner thread placeholders
+        self._report_thread = None
+        self._report_worker = None
+
+    def _on_run_report_scan(self):
+        """Start background scan of parquet files under data/bronze/daily and update UI."""
+        try:
+            # prevent double-start
+            if getattr(self, '_report_thread', None) and self._report_thread.isRunning():
+                self._append_report_log("Scan already running")
+                return
+
+            # Create worker
+            class ReportScanner(QObject):
+                progress = pyqtSignal(int)
+                log = pyqtSignal(str)
+                finished = pyqtSignal(list)
+
+                def __init__(self, base_dir: Path, limit: int = 0):
+                    super().__init__()
+                    self.base_dir = Path(base_dir)
+                    self.limit = limit
+                    self._is_running = True
+
+                def stop(self):
+                    self._is_running = False
+
+                def run(self):
+                    results = []
+                    try:
+                        # Determine bronze dir
+                        bronze_dir = self.base_dir / 'daily'
+                        if not bronze_dir.exists():
+                            bronze_dir = self.base_dir
+                        files = sorted(bronze_dir.glob('*.parquet'))
+                        total = len(files)
+                        if total == 0:
+                            self.log.emit(f"No parquet files found in {bronze_dir}")
+                            self.finished.emit(results)
+                            return
+                        if self.limit and self.limit > 0:
+                            files = files[:self.limit]
+                            total = len(files)
+
+                        for idx, fp in enumerate(files, start=1):
+                            if not self._is_running:
+                                self.log.emit("Scan stopped by user")
+                                break
+                            ticker = fp.stem
+                            try:
+                                df = pd.read_parquet(fp)
+                                if 'date' in df.columns:
+                                    last = pd.to_datetime(df['date']).max()
+                                elif 'Date' in df.columns:
+                                    last = pd.to_datetime(df['Date']).max()
+                                else:
+                                    last = None
+                                rows = len(df)
+                                last_str = last.strftime('%Y-%m-%d') if last is not None else 'N/A'
+                                results.append({'ticker': ticker, 'last_date': last_str, 'rows': rows})
+                                self.log.emit(f"{ticker}: last={last_str}, rows={rows}")
+                            except Exception as e:
+                                self.log.emit(f"{ticker}: ERROR reading file: {e}")
+                                results.append({'ticker': ticker, 'last_date': 'ERROR', 'rows': 0})
+
+                            pct = int((idx / total) * 100)
+                            self.progress.emit(pct)
+
+                        self.finished.emit(results)
+                    except Exception as e:
+                        self.log.emit(f"Scan failed: {e}")
+                        self.finished.emit(results)
+
+            base = Path('data/bronze')
+            limit = 0
+            self._report_worker = ReportScanner(base, limit=limit)
+            self._report_thread = QThread(self)
+            self._report_worker.moveToThread(self._report_thread)
+            self._report_thread.started.connect(self._report_worker.run)
+            self._report_worker.progress.connect(self._on_report_progress)
+            self._report_worker.log.connect(self._append_report_log)
+            self._report_worker.finished.connect(self._on_report_finished)
+            # ensure thread quits after finished
+            self._report_worker.finished.connect(self._report_thread.quit)
+
+            self.scan_btn.setEnabled(False)
+            self.scan_stop_btn.setEnabled(True)
+            self.report_progress.setValue(0)
+            self.report_table.setRowCount(0)
+            self.report_log.clear()
+
+            self._report_thread.start()
+        except Exception as e:
+            self._append_report_log(f"Failed to start scan: {e}")
+
+    def _on_stop_report_scan(self):
+        try:
+            if getattr(self, '_report_worker', None):
+                try:
+                    self._report_worker.stop()
+                except Exception:
+                    pass
+            self.scan_stop_btn.setEnabled(False)
+            self.scan_btn.setEnabled(True)
+        except Exception:
+            pass
+
+    def _on_report_progress(self, v: int):
+        try:
+            self.report_progress.setValue(v)
+        except Exception:
+            pass
+
+    def _append_report_log(self, line: str):
+        try:
+            ts = datetime.now().strftime('%H:%M:%S')
+            self.report_log.append(f"[{ts}] {line}")
+        except Exception:
+            pass
+
+    def _on_report_finished(self, results: list):
+        try:
+            # populate table
+            self.report_table.setRowCount(len(results))
+            for i, r in enumerate(results):
+                self.report_table.setItem(i, 0, QTableWidgetItem(r.get('ticker', '')))
+                self.report_table.setItem(i, 1, QTableWidgetItem(r.get('last_date', '')))
+                self.report_table.setItem(i, 2, QTableWidgetItem(str(r.get('rows', 0))))
+
+            self.scan_btn.setEnabled(True)
+            self.scan_stop_btn.setEnabled(False)
+            self.report_progress.setValue(100)
+            self._append_report_log("Scan completed")
+        except Exception as e:
+            self._append_report_log(f"Error finishing scan: {e}")
 
     def _build_daily_update_tab(self):
         tab = self.daily_update_tab

@@ -137,7 +137,7 @@ Always remind users about risk management and due diligence."""
         
         return " | ".join(context_parts)
     
-    async def _call_perplexity_api(self, prompt: str) -> str:
+    async def _call_perplexity_api(self, prompt: str, *, allow_fallback: bool = True, explicit_model: Optional[str] = None) -> str:
         """
         Call Perplexity API
         
@@ -159,8 +159,11 @@ Always remind users about risk management and due diligence."""
             "Content-Type": "application/json"
         }
         
-        # If force_finance is enabled, prefer the finance_model and add search filters
-        model_to_use = self.config.perplexity.finance_model if getattr(self.config.perplexity, 'force_finance', False) else self.config.perplexity.model
+        # Determine which model to use. Caller can force an explicit model or
+        # rely on the configured preference (finance_model when force_finance=True).
+        model_to_use = explicit_model if explicit_model else (
+            self.config.perplexity.finance_model if getattr(self.config.perplexity, 'force_finance', False) else self.config.perplexity.model
+        )
         payload = {
             "model": model_to_use,
             "messages": [
@@ -186,7 +189,7 @@ Always remind users about risk management and due diligence."""
         except Exception:
             pass
         
-        self.logger.debug(f"Calling Perplexity API with model: {self.config.perplexity.model}")
+        self.logger.debug(f"Calling Perplexity API with model: {model_to_use} (allow_fallback={allow_fallback})")
         
         # Create a transient session if none is available, and close it after use.
         # This prevents retaining a ClientSession that is bound to an event loop
@@ -208,11 +211,11 @@ Always remind users about risk management and due diligence."""
                 else:
                     error_text = await response.text()
                     # Handle invalid model error by attempting a fallback
-                    if response.status == 400 and 'invalid_model' in error_text.lower():
-                        self.logger.warning(f"Invalid model {self.config.perplexity.model}, trying fallback...")
+                    if response.status == 400 and 'invalid_model' in error_text.lower() and allow_fallback:
+                        self.logger.warning(f"Invalid model {model_to_use}, trying fallback...")
                         # Try a fallback model name
                         fallback = 'sonar'
-                        if self.config.perplexity.model != fallback:
+                        if model_to_use != fallback:
                             payload_fallback = dict(payload)
                             payload_fallback['model'] = fallback
                             async with self.session.post(url, headers=headers, json=payload_fallback) as resp2:
