@@ -119,6 +119,7 @@ def clean_tickers(seq):
     - Replace '.' with '-' to match Yahoo format
     - Drop empty, too-short, or invalid symbols
     - Keep only alphanumeric plus '-'
+    - Filter out warrants (ending with W), test stocks, and Z-stocks
     """
     cleaned = []
     for s in seq:
@@ -136,6 +137,13 @@ def clean_tickers(seq):
         if len(t) < 2:
             continue
         if not all(ch.isalnum() or ch == '-' for ch in t):
+            continue
+        # Filter out warrants (ending with W) and test stocks, Z-stocks
+        if t.endswith('W') and len(t) > 1:  # Warrants like AAPLW, GOOGW
+            continue
+        if 'TEST' in t or t.startswith('TEST'):  # Test stocks
+            continue
+        if t.startswith('Z') or 'ZZ' in t:  # Z-stocks like ZAZZT, ZVZZT
             continue
         cleaned.append(t)
     # unique + stable order
@@ -266,7 +274,10 @@ def get_russell2000_tickers():
     ]
     blacklisted_exact = [
         'ZAZZT', 'ZBZX', 'ZCZZT', 'ZBZZT', 'ZEXIT', 'ZIEXT', 'ZTEST',
-        'ZXIET', 'ZZAZT', 'ZZINT', 'ZZEXT', 'ZZTEST', 'ZZDIV', 'XTSLA'
+        'ZXIET', 'ZZAZT', 'ZZINT', 'ZZEXT', 'ZZTEST', 'ZZDIV', 'XTSLA',
+        'ADRO', 'CAD', 'CBO', 'CBX', 'CRDA', 'FILE', 'GEFB', 'GTXI', 'IGZ', 'INH',
+        'MOGA', 'MSFUT', 'P5N994', 'PDLI', 'RTYZ5', 'SBT', 'THE', 'THRD', 'XTSLA',
+        'DTSQR', 'IPCXU', 'NOEMR', 'QSEAR', 'WTGUR'
     ]
     for x in seq:
         t = str(x).strip().upper().replace(".", "-")
@@ -312,9 +323,11 @@ def get_all_tickers():
     print(f"  S&P 500: {len(sp500)}, NASDAQ-100: {len(nasdaq100)}, Dow: {len(dow30)}")
     print(f"  Russell 2000: {len(russell2000)}, NYSE: {len(nyse)}, NASDAQ: {len(nasdaq)}")
     print(f"  Additional ETFs: {len(additional_etfs)}")
-    filtered = [t for t in combined if '-' not in t and len(t) >= 2 and t.isalnum()]
+    filtered = [t for t in combined if '-' not in t and len(t) >= 2 and t.isalnum() and 
+                not (t.endswith('W') and len(t) > 1) and 'TEST' not in t and not t.startswith('TEST') and
+                not t.startswith('Z') and not 'ZZ' in t]
     removed = len(combined) - len(filtered)
-    print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out tickers with '-' or invalid)")
+    print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out tickers with '-', warrants (W), test stocks, Z-stocks, or invalid)")
     return filtered
 
 def update_price_data(ticker, start_date, folder):
@@ -392,12 +405,36 @@ def update_price_data(ticker, start_date, folder):
             return
         new_df.index = pd.to_datetime(new_df.index)
         new_df.index.name = "Date"
+
+        # Normalize column names - flatten MultiIndex if present
+        if isinstance(new_df.columns, pd.MultiIndex):
+            new_df.columns = new_df.columns.get_level_values(0)
+
+        # Ensure we have the standard OHLCV columns
+        expected_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if not all(col in new_df.columns for col in expected_cols):
+            print(f"Warning: Missing expected columns for {ticker}, skipping update")
+            return
+
+        # Keep only the expected columns
+        new_df = new_df[expected_cols]
+
         if existing_df is not None:
-            df = pd.concat([existing_df, new_df])
-            df = df[~df.index.duplicated(keep='last')]
+            # Also normalize existing_df columns if needed
+            if isinstance(existing_df.columns, pd.MultiIndex):
+                existing_df.columns = existing_df.columns.get_level_values(0)
+            if not all(col in existing_df.columns for col in expected_cols):
+                print(f"Warning: Existing data missing expected columns for {ticker}, re-downloading full range")
+                existing_df = None
+                df = new_df
+            else:
+                existing_df = existing_df[expected_cols]
+                df = pd.concat([existing_df, new_df])
+                df = df[~df.index.duplicated(keep='last')]
         else:
             df = new_df
-        df.to_csv(file_path)
+
+        df.to_csv(file_path, index=True)
         print(f"Saved price data for {ticker}")
     except Exception as e:
         print(f"Error downloading price data for {ticker}: {e}")
@@ -737,7 +774,8 @@ def process_tickers_daily(limit: int | None = None):
                     last_date = df['Date'].max()
                     days_since_update = (datetime.now() - last_date.tz_localize(None) if last_date.tz else datetime.now() - last_date).days
                     has_data = not df[['Open', 'High', 'Low', 'Close']].isnull().all().all()
-                    if days_since_update < 1 and has_data:
+                    # Allow data to be up to 2 days old (accounting for weekends and market delays)
+                    if days_since_update <= 2 and has_data:
                         needs_price_update = False
                 except:
                     pass

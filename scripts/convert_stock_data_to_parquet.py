@@ -22,34 +22,36 @@ import pandas as pd
 
 
 def parse_price_csv(csv_path: Path, symbol: str) -> pd.DataFrame:
-    """Parse the custom price CSV into a normalized DataFrame with columns: date, open, high, low, close, adj_close, volume"""
-    # The CSV appears to have 3 header rows:
-    # 1: Price,Close,High,Low,Open,Volume
-    # 2: Ticker,<SYMBOL>,<SYMBOL>,...
-    # 3: Date,,,,,
-    # Then rows: YYYY-MM-DD, Price, Close, High, Low, Open, Volume
+    """Parse the price CSV into a normalized DataFrame with columns: date, open, high, low, close, adj_close, volume"""
     try:
-        names7 = ['Date', 'Price', 'Close', 'High', 'Low', 'Open', 'Volume']
-        # Skip the three header rows and force column names
-        data = pd.read_csv(csv_path, skiprows=3, names=names7, engine='python')
-        # Some files might only have 6 data columns (no leading Price/Adj Close)
-        if data.shape[1] == 6:
-            # Assume columns: Date, Close, High, Low, Open, Volume
-            data.columns = ['Date', 'Close', 'High', 'Low', 'Open', 'Volume']
-            # Inject Price column equal to Close
-            data.insert(1, 'Price', data['Close'])
-        elif data.shape[1] != 7:
-            # As a last resort, try regular parsing and rename
-            tmp = pd.read_csv(csv_path)
-            tmp.columns = [str(c).strip().title() for c in tmp.columns]
-            # If there's no Price column, synthesize from Close
-            if 'Price' not in tmp.columns and 'Close' in tmp.columns:
-                tmp.insert(1, 'Price', tmp['Close'])
-            # Ensure all needed columns exist
-            for col in ['Date','Price','Close','High','Low','Open','Volume']:
-                if col not in tmp.columns:
-                    tmp[col] = None
-            data = tmp[['Date','Price','Close','High','Low','Open','Volume']]
+        # Try new format first: Date,Open,High,Low,Close,Volume
+        data = pd.read_csv(csv_path, parse_dates=['Date'])
+        if 'Date' in data.columns and all(col in data.columns for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
+            # New format
+            data = data[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
+        else:
+            # Fallback to old format parsing
+            names7 = ['Date', 'Price', 'Close', 'High', 'Low', 'Open', 'Volume']
+            # Skip the three header rows and force column names
+            data = pd.read_csv(csv_path, skiprows=3, names=names7, engine='python')
+            # Some files might only have 6 data columns (no leading Price/Adj Close)
+            if data.shape[1] == 6:
+                # Assume columns: Date, Close, High, Low, Open, Volume
+                data.columns = ['Date', 'Close', 'High', 'Low', 'Open', 'Volume']
+                # Inject Price column equal to Close
+                data.insert(1, 'Price', data['Close'])
+            elif data.shape[1] != 7:
+                # As a last resort, try regular parsing and rename
+                tmp = pd.read_csv(csv_path)
+                tmp.columns = [str(c).strip().title() for c in tmp.columns]
+                # If there's no Price column, synthesize from Close
+                if 'Price' not in tmp.columns and 'Close' in tmp.columns:
+                    tmp.insert(1, 'Price', tmp['Close'])
+                # Ensure all needed columns exist
+                for col in ['Date','Price','Close','High','Low','Open','Volume']:
+                    if col not in tmp.columns:
+                        tmp[col] = None
+                data = tmp[['Date','Price','Close','High','Low','Open','Volume']]
 
         # Clean types
         def to_float(x):
@@ -71,7 +73,11 @@ def parse_price_csv(csv_path: Path, symbol: str) -> pd.DataFrame:
         out['high'] = data['High'].apply(to_float)
         out['low'] = data['Low'].apply(to_float)
         out['close'] = data['Close'].apply(to_float)
-        out['adj_close'] = data['Price'].apply(to_float)
+        # For new format, adj_close equals close (no separate adjusted close data)
+        if 'Price' in data.columns:
+            out['adj_close'] = data['Price'].apply(to_float)
+        else:
+            out['adj_close'] = out['close']  # Use close as adj_close
         out['volume'] = data['Volume'].apply(to_int)
         out = out.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
         # Some rows may have None for prices; drop them
@@ -155,7 +161,6 @@ def convert_all(source: Path, out_daily: Path, out_fund_dir: Optional[Path], agg
                 if out_fund_dir:
                     (out_fund_dir / f"{sym}.json").write_text(json.dumps(norm, ensure_ascii=False, indent=2), encoding='utf-8')
                 if per_symbol_fund_parquet_dir:
-                    import pandas as pd
                     fp = per_symbol_fund_parquet_dir / f"{sym}.parquet"
                     pd.DataFrame([norm]).to_parquet(fp, index=False)
                 agg_rows.append(norm)
@@ -168,7 +173,9 @@ def convert_all(source: Path, out_daily: Path, out_fund_dir: Optional[Path], agg
     # Aggregate fundamentals parquet
     if aggregate_fund and agg_rows:
         try:
-            agg_df = pd.DataFrame(agg_rows)
+            # Convert all values to strings to avoid type inference issues
+            str_rows = [{k: str(v) if v is not None else '' for k, v in row.items()} for row in agg_rows]
+            agg_df = pd.DataFrame(str_rows)
             # Order columns
             cols = ['symbol'] + [c for c in agg_df.columns if c != 'symbol']
             agg_df = agg_df[cols]
