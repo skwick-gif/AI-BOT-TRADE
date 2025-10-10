@@ -505,7 +505,7 @@ class WatchlistTable(QTableWidget):
     def load_symbol_data(self, symbol: str, reference_date: str = None):
         """Load price data for a symbol from parquet files"""
         if pd is None:
-            return None
+            return {'error': 'Pandas not available'}
             
         try:
             # If no reference date provided, use today
@@ -519,32 +519,31 @@ class WatchlistTable(QTableWidget):
                     try:
                         ref_dt = datetime.strptime(reference_date, "%Y-%m-%d")
                     except ValueError:
-                        ref_dt = datetime.now()
+                        return {'error': f'Invalid date format: {reference_date}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM'}
                 reference_date = ref_dt.strftime("%Y-%m-%d")
             
             # Try to load data from parquet
             parquet_path = Path("data/bronze/daily") / f"{symbol}.parquet"
             if not parquet_path.exists():
-                return None
+                return {'error': f'No data file found for {symbol}'}
                 
             df = pd.read_parquet(parquet_path)
             if df.empty:
-                return None
+                return {'error': f'No data available for {symbol}'}
                 
             # Ensure date column exists and is datetime
             if 'date' in df.columns:
                 df['date'] = pd.to_datetime(df['date'])
                 df = df.sort_values('date')
             else:
-                return None
+                return {'error': f'No date column in data for {symbol}'}
             
             # Find the reference date or closest date before it
             ref_date = pd.to_datetime(reference_date)
             df_filtered = df[df['date'] <= ref_date]
             
             if df_filtered.empty:
-                # If no data before reference date, use earliest available
-                df_filtered = df.head(1)
+                return {'error': f'No data available before {reference_date} for {symbol}'}
             
             # Get the latest data point from the filtered data
             latest_row = df_filtered.iloc[-1]
@@ -572,8 +571,7 @@ class WatchlistTable(QTableWidget):
             }
             
         except Exception as e:
-            print(f"Error loading data for {symbol}: {e}")
-            return None
+            return {'error': f'Error loading data for {symbol}: {str(e)}'}
     
     def update_symbol_display(self, symbol: str):
         """Update the display data for a symbol"""
@@ -588,7 +586,19 @@ class WatchlistTable(QTableWidget):
         
         # Load data
         data = self.load_symbol_data(symbol, reference_date)
-        if data is None:
+        if data is None or 'error' in data:
+            # Show error message in price column
+            error_msg = data.get('error', 'Unknown error') if data else 'No data available'
+            error_item = QTableWidgetItem(f"❌ {error_msg}")
+            error_item.setForeground(QColor(200, 0, 0))
+            self.setItem(row, 2, error_item)
+            
+            # Clear other data columns
+            for col in range(3, self.columnCount() - 1):
+                item = QTableWidgetItem("-")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+                item.setForeground(QColor(100, 100, 100))
+                self.setItem(row, col, item)
             return
             
         # Update Price column (2)
