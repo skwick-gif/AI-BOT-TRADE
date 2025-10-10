@@ -44,7 +44,7 @@ class WatchlistTable(QTableWidget):
     def setup_ui(self):
         headers = [
             "Symbol", "נוסף בתאריך", "Price", "Volume",
-            "יום 1", "יום 2", "יום 3", "יום 4", "יום 5", "יום 6", "יום 7",
+            "יום -1", "יום -2", "יום -3", "יום -4", "יום -5", "יום -6", "יום -7",
             "AI Rating", "AI Prediction", "Stop Loss", "Signal", "Sharpe Ratio", "Tools"
         ]
         self.setColumnCount(len(headers))
@@ -543,22 +543,20 @@ class WatchlistTable(QTableWidget):
             df_filtered = df[df['date'] <= ref_date]
             
             if df_filtered.empty:
-                return {'error': f'No data available before {reference_date} for {symbol}'}
+                # If no data before reference date, use the most recent available data
+                df_filtered = df.tail(1)
+                ref_date = df_filtered.iloc[0]['date']
             
             # Get the latest data point from the filtered data
             latest_row = df_filtered.iloc[-1]
             
-            # Calculate 7-day price progression from reference date
-            end_date = ref_date + timedelta(days=7)
-            future_data = df[(df['date'] > ref_date) & (df['date'] <= end_date)]
-            
-            # Prepare daily progression data
+            # Calculate historical progression: show last 7 days ending at reference date
             daily_data = {}
-            for i in range(1, 8):  # Days 1-7
-                target_date = ref_date + timedelta(days=i)
-                day_data = future_data[future_data['date'] <= target_date]
+            for i in range(1, 8):  # Days 1-7 (most recent to oldest)
+                target_date = ref_date - timedelta(days=i)
+                day_data = df[df['date'] == target_date]
                 if not day_data.empty:
-                    price = day_data.iloc[-1]['close'] if 'close' in day_data.columns else day_data.iloc[-1].get('adj_close', 0)
+                    price = day_data.iloc[0]['close'] if 'close' in day_data.columns else day_data.iloc[0].get('adj_close', 0)
                     daily_data[f'day_{i}'] = price
                 else:
                     daily_data[f'day_{i}'] = None
@@ -612,7 +610,7 @@ class WatchlistTable(QTableWidget):
         volume_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
         self.setItem(row, 3, volume_item)
         
-        # Update daily progression columns (4-10 = Days 1-7)
+        # Update daily progression columns (4-10 = Days 1-7, where Day 1 is most recent)
         for i in range(1, 8):
             col_index = 3 + i  # Columns 4-10
             day_price = data['daily_progression'].get(f'day_{i}')
