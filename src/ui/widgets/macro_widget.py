@@ -124,7 +124,7 @@ class MacroIndicatorCard(QFrame):
     def setup_ui(self, data):
         """Setup the indicator card UI"""
         self.setFrameStyle(QFrame.Shape.Box)
-        self.setFixedHeight(90)
+        self.setFixedHeight(110)
         self.setMinimumWidth(180)
         self.setStyleSheet("""
             QFrame {
@@ -206,14 +206,16 @@ class MacroWidget(QWidget):
         main_layout.setContentsMargins(18, 18, 18, 18)
         main_layout.setSpacing(12)
         
-        # Title
+        # Title and Refresh button in same row
+        title_layout = QHBoxLayout()
         title = QLabel("📈 Macroeconomic Indicators")
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(14)
         title.setFont(title_font)
-        title.setStyleSheet("color: #ffffff; margin-bottom: 10px;")
-        main_layout.addWidget(title)
+        title.setStyleSheet("color: #ffffff;")
+        title_layout.addWidget(title)
+        title_layout.addStretch()
         
         # Refresh button
         refresh_button = QPushButton("🔄 Refresh Data")
@@ -231,7 +233,8 @@ class MacroWidget(QWidget):
                 background-color: #14a085;
             }
         """)
-        main_layout.addWidget(refresh_button, alignment=Qt.AlignmentFlag.AlignRight)
+        title_layout.addWidget(refresh_button)
+        main_layout.addLayout(title_layout)
         
         # Container for indicator cards
         self.indicators_container = QWidget()
