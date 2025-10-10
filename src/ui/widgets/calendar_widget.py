@@ -259,7 +259,7 @@ class CalendarWidget(QFrame):
 
         # Highlight dates with events
         highlight_format = QTextCharFormat()
-        highlight_format.setBackground(QColor("#4CAF50"))  # Green background
+        highlight_format.setBackground(QColor("#2E8B57"))  # Sea green background
         highlight_format.setForeground(QColor("white"))   # White text
         for event_date in event_dates:
             qdate = QDate(event_date.year, event_date.month, event_date.day)
@@ -267,7 +267,28 @@ class CalendarWidget(QFrame):
 
         # Build a list with items and store event payload
         BIG_MOVERS = {"AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA","BRK.B","BRK.A","JPM","JNJ"}
+        
+        # Filter events by selected date
+        selected_date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+        filtered_events = []
         for ev in events:
+            src = ev.get("_source", "")
+            event_date = ""
+            if src == "earnings":
+                event_date = ev.get("date") or ev.get("time") or ""
+            elif src == "dividend":
+                event_date = ev.get("payDate") or ev.get("recordDate") or ev.get("exDate") or ""
+            elif src == "economic":
+                event_date = ev.get("time") or ev.get("date") or ""
+            elif src == "ipo":
+                event_date = ev.get("date") or ev.get("ipoDate") or ev.get("time") or ""
+            
+            # Show events on or after selected date
+            if event_date and event_date >= selected_date:
+                filtered_events.append(ev)
+        
+        for ev in filtered_events:
+            src = ev.get("_source", "")
             if src == "earnings":
                 symbol = ev.get("symbol") or ev.get("ticker") or "?"
                 date = ev.get("date") or ev.get("time") or ""
@@ -323,7 +344,7 @@ class CalendarWidget(QFrame):
                 item = QListWidgetItem(str(ev))
                 item.setData(Qt.ItemDataRole.UserRole, ev)
                 self.events_list.addItem(item)
-        self.status_label.setText(f"Loaded {len(events)} events.")
+        self.status_label.setText(f"Loaded {len(filtered_events)} events.")
 
     def on_events_error(self, msg: str):
         self.events_list.clear()
