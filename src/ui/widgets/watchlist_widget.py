@@ -540,22 +540,18 @@ class WatchlistTable(QTableWidget):
             
             # Find the reference date or closest date before it
             ref_date = pd.to_datetime(reference_date)
+            
+            # Get the most recent available data as reference
             df_filtered = df[df['date'] <= ref_date]
-            
             if df_filtered.empty:
-                # If no data before reference date, use the most recent available data
                 df_filtered = df.tail(1)
-                ref_date = df_filtered.iloc[0]['date']
-            
-            # Get the reference data point (most recent available)
             ref_row = df_filtered.iloc[-1]
             ref_price = ref_row.get('close', ref_row.get('adj_close', 0))
             
-            # Calculate progression: show 7 days leading up to reference date (chronological order)
+            # Calculate progression: show 7 days starting from reference date forward
             daily_data = {}
-            for i in range(1, 8):  # Days 1-7 (oldest to newest)
-                days_back = 7 - i  # Day 1 = ref_date - 6 days, Day 7 = ref_date
-                target_date = ref_date - timedelta(days=days_back)
+            for i in range(1, 8):  # Days 1-7 (reference date + (i-1) days)
+                target_date = ref_date + timedelta(days=i-1)  # Day 1 = ref_date, Day 2 = ref_date + 1, etc.
                 # Find the closest available date on or before target_date
                 available_data = df[df['date'] <= target_date]
                 if not available_data.empty:
