@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import re
 
 from ib_insync import IB, Stock, Contract, Order, Trade, PortfolioItem
+from ib_insync import Option, ComboLeg
 from ib_insync.objects import Position, AccountValue
 
 from core.config_manager import IBKRConfig
@@ -526,6 +527,135 @@ class IBKRService:
         except Exception as e:
             self.logger.error(f"Error getting historical data for {symbol}: {e}")
             return []
+
+    # -------------------- Options helpers --------------------
+    def get_last_price(self, symbol: str) -> Optional[float]:
+        """Return last/close or mid(bid,ask) for a stock using market data."""
+        try:
+            if not self.is_connected():
+                return None
+            c = Stock(symbol, 'SMART', 'USD')
+            t = self.ib.reqMktData(c, '', False, False)
+            self.ib.sleep(1)
+            px = None
+            if t.bid is not None and t.ask is not None and t.bid > 0 and t.ask > 0:
+                px = (float(t.bid) + float(t.ask)) / 2.0
+            if px is None:
+                for fld in (t.last, t.close, t.marketPrice):
+                    if fld is not None and float(fld) > 0:
+                        px = float(fld)
+                        break
+            self.ib.cancelMktData(c)
+            return float(px) if px is not None else None
+        except Exception:
+            return None
+
+    def get_option_secdef_params(self, symbol: str, exchange: str = 'SMART') -> Dict[str, Any]:
+        """Get option chain parameters: expirations and strikes for the underlying symbol."""
+        out = {"expirations": [], "strikes": [], "multiplier": None}
+        try:
+            if not self.is_connected():
+                return out
+            und = Stock(symbol, 'SMART', 'USD')
+            qualified = self.ib.qualifyContracts(und)
+            if not qualified:
+                return out
+            conId = qualified[0].conId
+            params = self.ib.reqSecDefOptParams(symbol, '', 'STK', conId)
+            # Prefer SMART or accumulate all
+            expirations = set()
+            strikes = set()
+            mult = None
+            for p in params:
+                if exchange and p.exchange and p.exchange != exchange:
+                    # still collect but deprioritize
+                    pass
+                try:
+                    for e in p.expirations or []:
+                        expirations.add(e)
+                    for k in p.strikes or []:
+                        try:
+                            strikes.add(float(k))
+                        except Exception:
+                            continue
+                    if getattr(p, 'multiplier', None) and not mult:
+                        mult = p.multiplier
+                except Exception:
+                    continue
+            out["expirations"] = sorted(list(expirations))
+            out["strikes"] = sorted(list(strikes))
+            out["multiplier"] = mult
+            return out
+        except Exception:
+            return out
+
+    def get_option_mid_price(self, symbol: str, right: str, strike: float, expiry: str, exchange: str = 'SMART') -> Optional[float]:
+        """Request market data for an option and return mid price."""
+        try:
+            if not self.is_connected():
+                return None
+            # expiry format: YYYYMMDD required by IBKR
+            opt = Option(symbol, expiry, float(strike), right.upper(), exchange)
+            self.ib.qualifyContracts(opt)
+            t = self.ib.reqMktData(opt, '', False, False)
+            self.ib.sleep(1)
+            mid = None
+            if t.bid is not None and t.ask is not None and t.bid > 0 and t.ask > 0:
+                mid = (float(t.bid) + float(t.ask)) / 2.0
+            if mid is None and t.last is not None and float(t.last) > 0:
+                mid = float(t.last)
+            self.ib.cancelMktData(opt)
+            return mid
+        except Exception:
+            return None
+
+    def place_option_combo_limit(
+        self,
+        symbol: str,
+        legs_specs: List[Dict[str, Any]],
+        total_qty: int,
+        limit_price: float,
+        action: str = 'BUY',
+        exchange: str = 'SMART'
+    ) -> Optional[Trade]:
+        """Place a multi-leg option combo (BAG) as a limit order.
+
+        legs_specs: list of {right:'C'|'P', strike:float, expiry:'YYYYMMDD', ratio:int, side:'BUY'|'SELL'}
+        action: overall action (BUY for net debit, SELL for net credit).
+        """
+        try:
+            if not self.is_connected():
+                raise Exception("Not connected to IBKR")
+            combo_legs: List[ComboLeg] = []
+            for leg in legs_specs:
+                opt = Option(symbol, str(leg['expiry']), float(leg['strike']), str(leg['right']).upper(), exchange)
+                q = self.ib.qualifyContracts(opt)
+                if not q:
+                    raise RuntimeError(f"Failed to qualify option leg {leg}")
+                conId = q[0].conId
+                ratio = int(abs(int(leg.get('ratio', leg.get('qty', 1)))))
+                side = str(leg.get('side', 'BUY')).upper()
+                combo_legs.append(ComboLeg(conId=conId, ratio=ratio, action=side, exchange=exchange))
+
+            bag = Contract()
+            bag.symbol = symbol
+            bag.secType = 'BAG'
+            bag.currency = 'USD'
+            bag.exchange = exchange
+            bag.comboLegs = combo_legs
+
+            order = Order()
+            order.action = action
+            order.orderType = 'LMT'
+            order.totalQuantity = int(total_qty)
+            order.lmtPrice = float(limit_price)
+            order.transmit = True
+
+            trade = self.ib.placeOrder(bag, order)
+            return trade
+        except Exception as e:
+            self.logger.error(f"Error placing option combo: {e}")
+            return None
     
     # Event handlers
     def _on_connected(self):

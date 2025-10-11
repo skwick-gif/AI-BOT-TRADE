@@ -1,0 +1,11 @@
+{
+  "analyze_symbol": {
+    "system": "You are Perplexity Finance. Provide options strategy ideas. Respond ONLY in compact JSON.",
+    "user": "Analyze {symbol} with this snapshot: {snapshot}. Return JSON: {\"strategies\":[{\"key\":str,\"name\":str,\"blurb\":str,\"confidence\":num,\"expected_profit\":num,\"max_loss\":num,\"success_prob\":num,\"timeframe\":str}]]}",
+    "schema": {
+      "strategies": []
+    },
+    "temperature": 0.2,
+    "max_tokens": 700
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "bull_call_spread": {
+    "mode": "vertical",
+    "legs": [
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K1",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K2",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K1",
+      "K2",
+      "E1"
+    ]
+  },
+  "bear_put_spread": {
+    "mode": "vertical",
+    "legs": [
+      {
+        "pos": "Long Put",
+        "right": "P",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K2",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Short Put",
+        "right": "P",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K1",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K1",
+      "K2",
+      "E1"
+    ]
+  },
+  "iron_condor": {
+    "mode": "condor",
+    "legs": [
+      {
+        "pos": "Short Put",
+        "right": "P",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K_put_high",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Long Put",
+        "right": "P",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K_put_low",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K_call_low",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K_call_high",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K_put_low",
+      "K_put_high",
+      "K_call_low",
+      "K_call_high",
+      "E1"
+    ]
+  },
+  "long_strangle": {
+    "mode": "strangle",
+    "legs": [
+      {
+        "pos": "Long Put",
+        "right": "P",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K_put",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K_call",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K_put",
+      "K_call",
+      "E1"
+    ]
+  },
+  "covered_call": {
+    "mode": "covered_call",
+    "legs": [
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K1",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K1",
+      "E1"
+    ]
+  },
+  "calendar_call": {
+    "mode": "calendar",
+    "legs": [
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K",
+        "expiry": "E_near"
+      },
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K",
+        "expiry": "E_far"
+      }
+    ],
+    "params": [
+      "K",
+      "E_near",
+      "E_far"
+    ]
+  },
+  "calendar_put": {
+    "mode": "calendar",
+    "legs": [
+      {
+        "pos": "Short Put",
+        "right": "P",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K",
+        "expiry": "E_near"
+      },
+      {
+        "pos": "Long Put",
+        "right": "P",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K",
+        "expiry": "E_far"
+      }
+    ],
+    "params": [
+      "K",
+      "E_near",
+      "E_far"
+    ]
+  },
+  "diagonal_call": {
+    "mode": "diagonal",
+    "legs": [
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -1,
+        "qty": 1,
+        "strike": "K_short",
+        "expiry": "E_near"
+      },
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K_long",
+        "expiry": "E_far"
+      }
+    ],
+    "params": [
+      "K_short",
+      "K_long",
+      "E_near",
+      "E_far"
+    ]
+  },
+  "butterfly_call": {
+    "mode": "butterfly",
+    "legs": [
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K1",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Short Call",
+        "right": "C",
+        "sign": -2,
+        "qty": 2,
+        "strike": "K2",
+        "expiry": "E1"
+      },
+      {
+        "pos": "Long Call",
+        "right": "C",
+        "sign": 1,
+        "qty": 1,
+        "strike": "K3",
+        "expiry": "E1"
+      }
+    ],
+    "params": [
+      "K1",
+      "K2",
+      "K3",
+      "E1"
+    ]
+  }
+}

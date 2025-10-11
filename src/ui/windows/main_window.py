@@ -18,6 +18,7 @@ from ui.widgets.chat_widget import ChatWidget
 from ui.widgets.ml_widget import MLWidget
 from ui.widgets.watchlist_widget import WatchlistWidget
 from ui.widgets.scanner_widget import ScannerWidget
+from ui.widgets.options_widget import OptionsWidget
 from ui.dialogs.api_keys_dialog import APIKeysDialog
 from ui.dialogs.data_update_dialog import DataUpdateDialog
 from ui.themes.theme_manager import ThemeManager
@@ -150,6 +151,10 @@ class MainWindow(QMainWindow):
         # Scanner Tab
         self.scanner_widget = ScannerWidget()
         self.tab_widget.addTab(self.scanner_widget, "🔍 Scanner")
+        
+        # OPTIONS Tab (with MAIN and BANK sub-tabs)
+        self.options_widget = OptionsWidget()
+        self.tab_widget.addTab(self.options_widget, "OPTIONS")
     
     def create_menu_bar(self):
         """Create menu bar"""

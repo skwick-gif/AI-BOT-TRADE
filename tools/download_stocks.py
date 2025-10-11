@@ -3,6 +3,7 @@ import sys
 import subprocess
 import json
 import time
+import logging
 import argparse
 from io import StringIO
 from datetime import datetime, timedelta
@@ -13,30 +14,196 @@ import requests
 from bs4 import BeautifulSoup
 import warnings
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('stock_fetcher.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
 warnings.filterwarnings("ignore", message="Could not infer format", category=UserWarning)
 warnings.filterwarnings("ignore", message="Unknown datetime string format", category=UserWarning)
 
 import yfinance as yf
 
-DATA_FOLDER = "stock_data"
+# Configuration
+class Config:
+    DATA_FOLDER = "stock_data"
+    START_DATE = "2020-01-01"
+    MAX_TICKERS_PER_BATCH = 50
+    TODO_FILE = 'todo_tickers.json'
+    COMPLETED_FILE = 'completed_tickers.json'
+    RETRY_COUNT_FILE = 'retry_counts.json'
+    MAX_RETRIES = 3
+    REQUEST_DELAY = 2  # seconds between web requests
+    HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+# קבועים נוספים
+MAX_RETRIES = 3
+RETRY_DELAY = 1.0
+
+# -------- קלאס ניהול מצב --------
+class StateManager:
+    """מנהל את מצב העיבוד של הטיקרים"""
+    
+    def __init__(self):
+        self.todo_file = "todo_tickers.json"
+        self.completed_file = "completed_tickers.json"
+        self.retry_file = "retry_counts.json"
+    
+    def initialize_state(self):
+        """אתחול מצב או טעינת מצב קיים"""
+        # אם אין קבצי מצב, צור אותם
+        if not os.path.exists(self.todo_file):
+            all_tickers = get_all_tickers()
+            self.save_todo_tickers(all_tickers)
+            logger.info(f"Initialized TODO list with {len(all_tickers)} tickers")
+        
+        if not os.path.exists(self.completed_file):
+            self.save_completed_tickers([])
+            logger.info("Initialized empty completed list")
+        
+        if not os.path.exists(self.retry_file):
+            self.save_retry_counts({})
+            logger.info("Initialized empty retry counts")
+    
+    def get_todo_tickers(self):
+        """טען רשימת טיקרים לעיבוד"""
+        try:
+            with open(self.todo_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading TODO list: {e}")
+            return []
+    
+    def get_completed_tickers(self):
+        """טען רשימת טיקרים שהושלמו"""
+        try:
+            with open(self.completed_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading completed list: {e}")
+            return []
+    
+    def get_retry_counts(self):
+        """טען מספרי ניסיונות חוזרים"""
+        try:
+            with open(self.retry_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading retry counts: {e}")
+            return {}
+    
+    def save_todo_tickers(self, todo_list):
+        """שמור רשימת TODO"""
+        try:
+            with open(self.todo_file, 'w', encoding='utf-8') as f:
+                json.dump(todo_list, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving TODO list: {e}")
+    
+    def save_completed_tickers(self, completed_list):
+        """שמור רשימת completed"""
+        try:
+            with open(self.completed_file, 'w', encoding='utf-8') as f:
+                json.dump(completed_list, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving completed list: {e}")
+    
+    def save_retry_counts(self, retry_counts):
+        """שמור מספרי ניסיונות"""
+        try:
+            with open(self.retry_file, 'w', encoding='utf-8') as f:
+                json.dump(retry_counts, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving retry counts: {e}")
+    
+    def mark_ticker_completed(self, ticker):
+        """העבר טיקר מ-TODO ל-completed"""
+        todo = self.get_todo_tickers()
+        completed = self.get_completed_tickers()
+        retry_counts = self.get_retry_counts()
+        
+        if ticker in todo:
+            todo.remove(ticker)
+        
+        if ticker not in completed:
+            completed.append(ticker)
+        
+        # נקה מספר ניסיונות
+        if ticker in retry_counts:
+            del retry_counts[ticker]
+        
+        self.save_todo_tickers(todo)
+        self.save_completed_tickers(completed)
+        self.save_retry_counts(retry_counts)
+    
+    def increment_retry_count(self, ticker):
+        """העלה מספר ניסיונות לטיקר"""
+        retry_counts = self.get_retry_counts()
+        retry_counts[ticker] = retry_counts.get(ticker, 0) + 1
+        self.save_retry_counts(retry_counts)
+        return retry_counts[ticker]
+    
+    def save_state(self):
+        """שמור מצב נוכחי (נקרא מעת לעת)"""
+        logger.debug("State saved successfully")
+
+def setup_logging():
+    """הגדרת מערכת הלוגים"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('stock_processing.log', encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+# אתחול משתנים גלובליים
+DATA_FOLDER = Config.DATA_FOLDER
 os.makedirs(DATA_FOLDER, exist_ok=True)
-START_DATE = "2020-01-01"
-MAX_TICKERS_PER_BATCH = 50
-TODO_FILE = 'todo_tickers.json'
-COMPLETED_FILE = 'completed_tickers.json'
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+START_DATE = Config.START_DATE
+MAX_TICKERS_PER_BATCH = Config.MAX_TICKERS_PER_BATCH
+TODO_FILE = Config.TODO_FILE
+COMPLETED_FILE = Config.COMPLETED_FILE
+HEADERS = Config.HEADERS
 
 session = requests.Session()
 session.headers.update(HEADERS)
 session.verify = True
 
-def check_internet_connection():
-    """בדיקת חיבור אינטרנט"""
+def load_retry_counts():
+    """Load retry counts from file"""
     try:
-        response = session.get("https://www.google.com", timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
+        with open(Config.RETRY_COUNT_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_retry_counts(retry_counts):
+    """Save retry counts to file"""
+    with open(Config.RETRY_COUNT_FILE, 'w') as f:
+        json.dump(retry_counts, f, indent=2)
+
+def should_retry(ticker, retry_counts):
+    """Check if we should retry a ticker based on failure count"""
+    return retry_counts.get(ticker, 0) < Config.MAX_RETRIES
+
+def increment_retry_count(ticker, retry_counts):
+    """Increment retry count for a ticker"""
+    retry_counts[ticker] = retry_counts.get(ticker, 0) + 1
+    save_retry_counts(retry_counts)
+
+def reset_retry_count(ticker, retry_counts):
+    """Reset retry count for successful ticker"""
+    if ticker in retry_counts:
+        del retry_counts[ticker]
+        save_retry_counts(retry_counts)
 
 def check_internet_connection():
     """בדיקת חיבור אינטרנט"""
@@ -113,41 +280,69 @@ def fetch_text(url, retries=4, backoff=1.8, timeout=45):
     raise RuntimeError(f"Failed to fetch {url}: {last}")
 
 def clean_tickers(seq):
-    """Normalize and filter ticker symbols.
-
-    - Uppercase and strip whitespace
-    - Replace '.' with '-' to match Yahoo format
-    - Drop empty, too-short, or invalid symbols
-    - Keep only alphanumeric plus '-'
-    - Filter out warrants (ending with W), test stocks, and Z-stocks
-    """
-    cleaned = []
-    for s in seq:
-        if s is None:
+    out = []
+    
+    # רשימת patterns למניות בעייתיות
+    blacklisted_patterns = [
+        'TEST',      # מניות test
+        'DUMMY',     # מניות dummy  
+        'ZZZ',       # מניות placeholder
+        'XXX',       # מניות placeholder
+        'TEMP',      # מניות זמניות
+        'BLANK',     # מניות ריקות
+    ]
+    
+    # רשימת מניות specific שידועות כבעייתיות
+    blacklisted_exact = [
+        'ZAZZT', 'ZBZX', 'ZCZZT', 'ZBZZT', 'ZEXIT', 'ZIEXT', 'ZTEST',
+        'ZXIET', 'ZZAZT', 'ZZINT', 'ZZEXT', 'ZZTEST', 'ZZDIV', 'XTSLA'
+    ]
+    
+    for x in seq:
+        t = str(x).strip().upper().replace(".", "-")
+        
+        # בדוק אם זה טיקר תקני (אותיות בלבד, 1-5 תווים, עם אופציה לקו ותווים נוספים)
+        if not t or not re.fullmatch(r"[A-Z]{1,5}(?:-[A-Z]{1,3})?", t):
             continue
-        t = str(s).strip().upper()
-        if not t:
+            
+        # סנן מניות בעייתיות - patterns
+        is_blacklisted = False
+        for pattern in blacklisted_patterns:
+            if pattern in t:
+                is_blacklisted = True
+                break
+        
+        if is_blacklisted:
             continue
-        # remove trailing markers like '^' or spaces, and unify dotted tickers
-        if t.endswith('^'):
-            t = t[:-1]
-        t = t.split()[0]
-        t = t.replace('.', '-')
-        # filter invalid
+            
+        # סנן מניות בעייתיות - exact matches
+        if t in blacklisted_exact:
+            continue
+            
+        # סנן תעודות אופציה (WARRANTS) - מסתיימות ב-W
+        if t.endswith('W') and t not in ['SDOW', 'UDOW']:
+            continue
+            
+        # סנן מניות Class (יש קו באמצע) - BRK-A, BRK-B, META-A וכו'
+        if '-' in t:
+            continue
+            
+        # סנן מניות קצרות מדי (תו בודד או שניים - לא תקניות)
         if len(t) < 2:
             continue
-        if not all(ch.isalnum() or ch == '-' for ch in t):
+            
+        # סנן מניות עם patterns חשודים
+        if t.startswith('Z') and len(t) >= 4 and t.endswith('T'):
+            # מניות שמתחילות ב-Z ומסתיימות ב-T (כמו ZTEST, ZEXIT)
             continue
-        # Filter out warrants (ending with W) and test stocks, Z-stocks
-        if t.endswith('W') and len(t) > 1:  # Warrants like AAPLW, GOOGW
-            continue
-        if 'TEST' in t or t.startswith('TEST'):  # Test stocks
-            continue
-        if t.startswith('Z') or 'ZZ' in t:  # Z-stocks like ZAZZT, ZVZZT
-            continue
-        cleaned.append(t)
-    # unique + stable order
-    return sorted(set(cleaned))
+            
+        out.append(t)
+    
+    filtered_count = len(seq) - len(out)
+    if filtered_count > 0:
+        logger.info(f"Filtered out {filtered_count} problematic tickers")
+    
+    return sorted(set(out))
 def try_one_url(txt):
     try:
         df = pd.read_csv(StringIO(txt), sep="|")
@@ -167,6 +362,7 @@ def try_one_url(txt):
     return []
 
 def get_nasdaq_tickers():
+    """אוסף מניות מבורסת NASDAQ"""
     mirrors = [
         "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
         "https://nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
@@ -176,49 +372,68 @@ def get_nasdaq_tickers():
     for url in mirrors:
         try:
             txt = fetch_text(url)
+            # נתח את הקובץ של NASDAQ
             try:
                 df = pd.read_csv(StringIO(txt), sep="|")
             except Exception as e:
-                print(f"Error parsing NASDAQ csv: {e}")
+                logger.error(f"Error parsing NASDAQ csv: {e}")
                 continue
+                
             if "Symbol" in df.columns:
                 tickers = clean_tickers(df["Symbol"].astype(str).tolist())
             else:
-                print(f"Symbol column not found in NASDAQ data columns: {df.columns.tolist()}")
+                logger.error(f"Symbol column not found in NASDAQ data columns: {df.columns.tolist()}")
                 continue
+                
             if len(tickers) > 100:
-                print(f"NASDAQ tickers ({len(tickers)}) downloaded from {url}")
+                logger.info(f"NASDAQ tickers ({len(tickers)}) downloaded from {url}")
                 return tickers
-            print("NASDAQ resolver returned too few tickers")
+            logger.warning("NASDAQ resolver returned too few tickers")
+            
         except Exception as e:
             last_err = e
-            print(f"Failed to download NASDAQ from {url}: {e}")
+            logger.error(f"Failed to download NASDAQ from {url}: {e}")
             continue
-    print(f"Failed all NASDAQ mirrors. Last error: {last_err}")
+    
+    logger.error(f"Failed all NASDAQ mirrors. Last error: {last_err}")
     return []
 
 def get_nyse_tickers():
+    """אוסף מניות מבורסת NYSE"""
     mirrors = [
         "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
         "https://nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
         "https://ftp.nasdaqtrader.com/SymbolDirectory/otherlisted.txt",
-        "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
     ]
     last_err = None
     for url in mirrors:
         try:
             txt = fetch_text(url)
-            tickers = try_one_url(txt)
-            if tickers:
-                with open("nyse.txt", "w", encoding="utf-8") as f:
-                    f.write(", ".join(tickers))
-                print(f"NYSE tickers ({len(tickers)}) created from {url}")
+            try:
+                df = pd.read_csv(StringIO(txt), sep="|")
+            except Exception as e:
+                logger.error(f"Error parsing NYSE csv: {e}")
+                continue
+                
+            if "NASDAQ Symbol" in df.columns:
+                tickers = clean_tickers(df["NASDAQ Symbol"].astype(str).tolist())
+            elif "Symbol" in df.columns:
+                tickers = clean_tickers(df["Symbol"].astype(str).tolist())
+            else:
+                logger.error(f"Expected symbol column not found in NYSE data columns: {df.columns.tolist()}")
+                continue
+                
+            if len(tickers) > 100:
+                logger.info(f"NYSE tickers ({len(tickers)}) downloaded from {url}")
                 return tickers
+            logger.warning("NYSE resolver returned too few tickers")
+            
         except Exception as e:
             last_err = e
-            print(f"Failed to download NYSE from {url}: {e}")
+            logger.error(f"Failed to download NYSE from {url}: {e}")
             continue
-    print(f"Failed all NYSE mirrors. Last error: {last_err}")
+    
+    logger.error(f"Failed all NYSE mirrors. Last error: {last_err}")
     return []
 
 def find_header_line(csv_text):
@@ -235,197 +450,204 @@ def sniff_delimiter(sample):
         return ","
 
 def get_russell2000_tickers():
+    """אוסף מניות ממדד ראסל 2000"""
     URL_RUSSELL2000 = ("https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
                        "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund")
     try:
-        print("Downloading Russell 2000 tickers via official iShares CSV...")
+        logger.info("Downloading Russell 2000 tickers via official iShares CSV...")
         csv_text = fetch_text(URL_RUSSELL2000)
+        
+        # שמור עותק גלם לבדיקה
         with open("IWM_raw.csv", "w", encoding="utf-8") as f:
             f.write(csv_text)
+            
         header_idx = find_header_line(csv_text)
         if header_idx < 0:
-            print("Header line with 'Ticker' not found in IWM CSV")
+            logger.error("Header line with 'Ticker' not found in IWM CSV")
             return []
+            
         trimmed = "\n".join(csv_text.splitlines()[header_idx:])
         delim = sniff_delimiter("\n".join(csv_text.splitlines()[header_idx:header_idx+5]))
+        
         df = pd.read_csv(StringIO(trimmed), sep=delim, engine="python")
+        
+        # חפש עמודת ticker
         ticker_col = None
         for c in df.columns:
             if str(c).strip().lower() == "ticker":
                 ticker_col = c
                 break
+        
         if ticker_col is None:
             for c in df.columns:
                 if "ticker" in str(c).lower():
                     ticker_col = c
                     break
+                    
         if ticker_col is None:
-            print(f"Could not find 'Ticker' column in IWM CSV. Columns: {list(df.columns)}")
+            logger.error(f"Could not find 'Ticker' column in IWM CSV. Columns: {list(df.columns)}")
             return []
+            
         tickers = clean_tickers(df[ticker_col].astype(str).tolist())
-        print(f"Russell 2000 tickers downloaded: {len(tickers)}")
+        logger.info(f"Russell 2000 tickers downloaded: {len(tickers)}")
         return tickers
+        
     except Exception as e:
-        print(f"Error downloading Russell 2000 tickers: {e}")
+        logger.error(f"Error downloading Russell 2000 tickers: {e}")
         return []
-    out = []
-    blacklisted_patterns = [
-        'TEST', 'DUMMY', 'ZZZ', 'XXX', 'TEMP', 'BLANK',
-    ]
-    blacklisted_exact = [
-        'ZAZZT', 'ZBZX', 'ZCZZT', 'ZBZZT', 'ZEXIT', 'ZIEXT', 'ZTEST',
-        'ZXIET', 'ZZAZT', 'ZZINT', 'ZZEXT', 'ZZTEST', 'ZZDIV', 'XTSLA',
-        'ADRO', 'CAD', 'CBO', 'CBX', 'CRDA', 'FILE', 'GEFB', 'GTXI', 'IGZ', 'INH',
-        'MOGA', 'MSFUT', 'P5N994', 'PDLI', 'RTYZ5', 'SBT', 'THE', 'THRD', 'XTSLA',
-        'DTSQR', 'IPCXU', 'NOEMR', 'QSEAR', 'WTGUR'
-    ]
-    for x in seq:
-        t = str(x).strip().upper().replace(".", "-")
-        if not t or not re.fullmatch(r"[A-Z]{1,5}(?:-[A-Z]{1,3})?", t):
-            continue
-        is_blacklisted = False
-        for pattern in blacklisted_patterns:
-            if pattern in t:
-                is_blacklisted = True
-                break
-        if is_blacklisted:
-            continue
-        if t in blacklisted_exact:
-            continue
-        if t.endswith('W'):
-            continue
-        if '-' in t:
-            continue
-        if len(t) < 2:
-            continue
-        if t.startswith('Z') and len(t) >= 4 and t.endswith('T'):
-            continue
-        out.append(t)
-    filtered_count = len(seq) - len(out)
-    if filtered_count > 0:
-        print(f"Filtered out {filtered_count} problematic tickers")
-    return sorted(set(out))
+
+def find_header_line(csv_text):
+    """מוצא את שורת הכותרת בקובץ CSV"""
+    for i, line in enumerate(csv_text.splitlines()):
+        if "Ticker" in line.split(",") or "Ticker" in line:
+            return i
+    return -1
+
+def sniff_delimiter(sample):
+    """מגלה את התו המפריד בקובץ CSV"""
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;|\t")
+        return dialect.delimiter
+    except Exception:
+        return ","
 
 def get_all_tickers():
+    # If there is an existing completed/todo state file, prefer returning that raw list
+    completed_file = Config.COMPLETED_FILE
+    todo_file = Config.TODO_FILE
+    if os.path.exists(completed_file):
+        try:
+            with open(completed_file, 'r', encoding='utf-8') as f:
+                completed_tickers = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read {completed_file}: {e}")
+            completed_tickers = []
+        todo_tickers = []
+        if os.path.exists(todo_file):
+            try:
+                with open(todo_file, 'r', encoding='utf-8') as f:
+                    todo_tickers = json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not read {todo_file}: {e}")
+        combined_from_files = completed_tickers + todo_tickers
+        logger.info(f"Using raw ticker list from state files: {len(combined_from_files)} tickers (completed: {len(completed_tickers)}, todo: {len(todo_tickers)})")
+        return sorted(set(combined_from_files))
+
     sp500 = get_sp500_tickers()
     nasdaq100 = get_nasdaq100_tickers()
     dow30 = get_dowjones_tickers()
     russell2000 = get_russell2000_tickers()
     nyse = get_nyse_tickers()
-    nasdaq = get_nasdaq_tickers()
+    nasdaq = get_nasdaq_tickers()  # הוספת מניות NASDAQ
     combined = set(sp500 + nasdaq100 + dow30 + russell2000 + nyse + nasdaq)
+    
+    # Add additional ETFs and leveraged products
     additional_etfs = [
-        'DIA', 'QQQ', 'IWM', 'SPY',
-        'SDOW', 'SPXL', 'SPXU', 'SQQQ', 'TNA', 'TQQQ', 'TZA', 'UDOW', 'UPRO'
+        'DIA', 'QQQ', 'IWM', 'SPY',  # Main ETFs
+        'SDOW', 'SPXL', 'SPXU', 'SQQQ', 'TNA', 'TQQQ', 'TZA', 'UDOW', 'UPRO'  # Leveraged ETFs
     ]
     combined.update(additional_etfs)
+    
     print(f"Total tickers before filter: {len(combined)}")
     print(f"  S&P 500: {len(sp500)}, NASDAQ-100: {len(nasdaq100)}, Dow: {len(dow30)}")
     print(f"  Russell 2000: {len(russell2000)}, NYSE: {len(nyse)}, NASDAQ: {len(nasdaq)}")
     print(f"  Additional ETFs: {len(additional_etfs)}")
-    filtered = [t for t in combined if '-' not in t and len(t) >= 2 and t.isalnum() and 
-                not (t.endswith('W') and len(t) > 1) and 'TEST' not in t and not t.startswith('TEST') and
-                not t.startswith('Z') and not 'ZZ' in t]
+    # סנן מניות בעייתיות
+    filtered = clean_tickers(list(combined))
     removed = len(combined) - len(filtered)
-    print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out tickers with '-', warrants (W), test stocks, Z-stocks, or invalid)")
+    print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out problematic tickers)")
+    
+    # מחק מידע של מניות מסוננות
+    removed_tickers = combined - set(filtered)
+    for ticker in removed_tickers:
+        folder = os.path.join(DATA_FOLDER, ticker)
+        if os.path.exists(folder):
+            import shutil
+            shutil.rmtree(folder)
+            print(f"Deleted data for {ticker}")
+    
     return filtered
 
+all_tickers = get_all_tickers()
+
 def update_price_data(ticker, start_date, folder):
+    """עדכון נתוני מחירים לטיקר מסוים עם טיפול משופר בשגיאות"""
     file_path = os.path.join(folder, ticker, f"{ticker}_price.csv")
     os.makedirs(os.path.join(folder, ticker), exist_ok=True)
+    
+    # בדוק אם קיים קובץ
     if os.path.exists(file_path):
         try:
             existing_df = pd.read_csv(file_path, parse_dates=['Date'], index_col='Date')
             existing_df = existing_df.dropna(how='all')
+            
             if not existing_df.empty:
+                # בדוק כותרות שגויות
+                if existing_df.columns.tolist() == ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']:
+                    logger.warning(f"Malformed header detected for {ticker}, fixing...")
+                    fixed_df = existing_df.reset_index()
+                    if len(fixed_df.columns) >= 6:
+                        fixed_df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+                        fixed_df['Date'] = pd.to_datetime(fixed_df['Date'])
+                        fixed_df.set_index('Date', inplace=True)
+                        existing_df = fixed_df
+                        
                 if existing_df.isnull().any().any():
-                    print(f"Warning: Missing data found in existing file for {ticker}, re-downloading full range")
+                    logger.warning(f"Missing data found in existing file for {ticker}, re-downloading full range")
                     existing_df = None
                     last_date = None
                 else:
                     last_date = existing_df.index.max()
             else:
                 last_date = None
+                
         except Exception as e:
-            try:
-                existing_df = pd.read_csv(file_path)
-                date_col = None
-                if 'Date' in existing_df.columns:
-                    date_col = 'Date'
-                elif len(existing_df.columns) > 0:
-                    date_col = existing_df.columns[0]
-                if date_col:
-                    sample_values = existing_df[date_col].dropna().head(5).tolist()
-                    valid_dates = 0
-                    for val in sample_values:
-                        try:
-                            pd.to_datetime(str(val))
-                            valid_dates += 1
-                        except:
-                            pass
-                    if valid_dates >= 2:
-                        try:
-                            existing_df[date_col] = pd.to_datetime(existing_df[date_col])
-                            existing_df.set_index(date_col, inplace=True)
-                            existing_df = existing_df.dropna(how='all')
-                            if not existing_df.empty and not existing_df.isnull().any().any():
-                                last_date = existing_df.index.max()
-                            else:
-                                existing_df = None
-                                last_date = None
-                        except Exception as parse_e:
-                            print(f"Warning: Failed to parse dates in existing file for {ticker}: {parse_e} - ignoring old data")
-                            existing_df = None
-                            last_date = None
-                    else:
-                        existing_df = None
-                        last_date = None
-                else:
-                    existing_df = None
-                    last_date = None
-            except Exception as e2:
-                print(f"Warning reading existing price file for {ticker}: {e2} - ignoring old data")
-                existing_df = None
-                last_date = None
+            logger.warning(f"Error reading existing file for {ticker}: {e} - re-downloading")
+            existing_df = None
+            last_date = None
     else:
         existing_df = None
         last_date = None
+    
+    # קבע תאריך התחלה להורדה
     start_download = start_date
     if last_date:
         start_date_dt = last_date + timedelta(days=1)
         if start_date_dt <= datetime.today():
             start_download = start_date_dt.strftime("%Y-%m-%d")
         else:
-            print(f"No new price data for {ticker}.")
+            logger.info(f"No new price data needed for {ticker}")
             return
+    
     try:
         new_df = yf.download(ticker, start=start_download, progress=False, auto_adjust=True)
+        
         if new_df.empty:
-            print(f"No new data for {ticker}.")
+            logger.warning(f"No new data available for {ticker}")
             return
+            
         new_df.index = pd.to_datetime(new_df.index)
         new_df.index.name = "Date"
-
-        # Normalize column names - flatten MultiIndex if present
+        
+        # נרמל שמות עמודות
         if isinstance(new_df.columns, pd.MultiIndex):
             new_df.columns = new_df.columns.get_level_values(0)
-
-        # Ensure we have the standard OHLCV columns
+        
+        # ודא שיש לנו את העמודות הנדרשות
         expected_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         if not all(col in new_df.columns for col in expected_cols):
-            print(f"Warning: Missing expected columns for {ticker}, skipping update")
+            logger.warning(f"Missing expected columns for {ticker}, skipping update")
             return
-
-        # Keep only the expected columns
+        
         new_df = new_df[expected_cols]
-
+        
+        # מזג עם נתונים קיימים
         if existing_df is not None:
-            # Also normalize existing_df columns if needed
             if isinstance(existing_df.columns, pd.MultiIndex):
                 existing_df.columns = existing_df.columns.get_level_values(0)
+                
             if not all(col in existing_df.columns for col in expected_cols):
-                print(f"Warning: Existing data missing expected columns for {ticker}, re-downloading full range")
-                existing_df = None
+                logger.warning(f"Existing data missing expected columns for {ticker}, re-downloading full range")
                 df = new_df
             else:
                 existing_df = existing_df[expected_cols]
@@ -433,16 +655,20 @@ def update_price_data(ticker, start_date, folder):
                 df = df[~df.index.duplicated(keep='last')]
         else:
             df = new_df
-
+        
+        # שמור עם כותרות נכונות
         df.to_csv(file_path, index=True)
-        print(f"Saved price data for {ticker}")
+        logger.info(f"Successfully saved price data for {ticker} ({len(df)} records)")
+        
     except Exception as e:
-        print(f"Error downloading price data for {ticker}: {e}")
+        logger.error(f"Error downloading price data for {ticker}: {e}")
         raise
 
 def get_html(url, max_retries=3, delay=0.8):
+    """מורד HTML מURL עם טיפול משופר בשגיאות וחזרות"""
     import time
     import random
+    
     for attempt in range(max_retries):
         try:
             time.sleep(delay + random.uniform(0, 1))
@@ -453,27 +679,34 @@ def get_html(url, max_retries=3, delay=0.8):
                 'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
             }
+            
             response = session.get(url, timeout=15, headers=headers)
             response.raise_for_status()
+            logger.debug(f"Successfully fetched HTML from {url}")
             return response.text
+            
         except requests.HTTPError as e:
             if e.response.status_code in [401, 403, 429]:
-                print(f"Access denied for {url} (attempt {attempt+1}/{max_retries}): {e}")
+                logger.warning(f"Access denied for {url} (attempt {attempt+1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     time.sleep(delay * (2 ** attempt))
                     continue
             else:
-                print(f"HTTP error fetching {url}: {e}")
+                logger.error(f"HTTP error fetching {url}: {e}")
             return ""
+            
         except (requests.Timeout, requests.ConnectionError) as e:
-            print(f"Connection error for {url} (attempt {attempt+1}/{max_retries}): {e}")
+            logger.warning(f"Connection error for {url} (attempt {attempt+1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 time.sleep(delay * (2 ** attempt))
                 continue
             return ""
+            
         except Exception as e:
-            print(f"Unexpected error fetching {url}: {e}")
+            logger.error(f"Unexpected error fetching {url}: {e}")
             return ""
+    
+    logger.error(f"Failed to fetch HTML from {url} after {max_retries} attempts")
     return ""
 
 if 'original_scrape_yahoo_fundamentals' not in globals():
@@ -744,69 +977,131 @@ def scrape_all_data(ticker, folder):
         return False
 
 def process_tickers_daily(limit: int | None = None):
-    print("Starting daily ticker processing...")
+    """עיבוד יומי של טיקרים עם מנגנון ניהול מצב משופר"""
+    logger.info("Starting daily ticker processing...")
+    
+    # אתחל או טען מצב
+    state_manager = StateManager()
+    state_manager.initialize_state()
+    
     all_tickers = get_all_tickers()
-    print(f"Found {len(all_tickers)} total tickers")
-    try:
-        with open(TODO_FILE, 'r') as f:
-            todo = json.load(f)
-    except:
-        todo = all_tickers.copy()
-    try:
-        with open(COMPLETED_FILE, 'r') as f:
-            completed = json.load(f)
-    except:
-        completed = []
-    print(f"TODO: {len(todo)}, Completed: {len(completed)}")
-    tickers_to_check = list(set(todo + completed))
-    if limit:
-        tickers_to_check = tickers_to_check[:max(1, int(limit))]
-    print(f"Checking {len(tickers_to_check)} tickers for updates")
-    updated_prices = 0
-    updated_advanced = 0
-    for ticker in tickers_to_check:
+    logger.info(f"Found {len(all_tickers)} total tickers")
+    
+    todo = state_manager.get_todo_tickers()
+    completed = state_manager.get_completed_tickers()
+    retry_counts = state_manager.get_retry_counts()
+    
+    logger.info(f"TODO: {len(todo)}, Completed: {len(completed)}")
+    
+    # אמת שטיקרים חדשים יתווספו לרשימת TODO
+    new_tickers = set(all_tickers) - set(todo) - set(completed)
+    if new_tickers:
+        todo.extend(list(new_tickers))
+        logger.info(f"Added {len(new_tickers)} new tickers to TODO list")
+    
+    # בחר טיקרים לעיבוד
+    tickers_to_process = todo[:limit] if limit else todo.copy()
+    
+    if not tickers_to_process:
+        logger.info("No tickers to process. All tickers completed.")
+        return
+    
+    logger.info(f"Processing {len(tickers_to_process)} tickers...")
+    
+    successful_count = 0
+    error_count = 0
+    
+    for i, ticker in enumerate(tickers_to_process, 1):
+        logger.info(f"Processing {ticker} ({i}/{len(tickers_to_process)})")
+        
         try:
+            # בדוק אם נדרש עדכון מחירים
             price_file = os.path.join(DATA_FOLDER, ticker, f"{ticker}_price.csv")
             needs_price_update = True
+            
             if os.path.exists(price_file):
                 try:
                     df = pd.read_csv(price_file, parse_dates=['Date'])
-                    last_date = df['Date'].max()
-                    days_since_update = (datetime.now() - last_date.tz_localize(None) if last_date.tz else datetime.now() - last_date).days
-                    has_data = not df[['Open', 'High', 'Low', 'Close']].isnull().all().all()
-                    # Allow data to be up to 2 days old (accounting for weekends and market delays)
-                    if days_since_update <= 2 and has_data:
-                        needs_price_update = False
-                except:
-                    pass
+                    if not df.empty:
+                        last_date = df['Date'].max()
+                        days_since = (datetime.now() - last_date.tz_localize(None) if last_date.tz else datetime.now() - last_date).days
+                        has_data = not df[['Open', 'High', 'Low', 'Close']].isnull().all().all()
+                        
+                        if days_since <= 2 and has_data:
+                            needs_price_update = False
+                except Exception as e:
+                    logger.warning(f"Error checking existing price data for {ticker}: {e}")
+            
+            # עדכן מחירים אם נדרש
             if needs_price_update:
-                print(f"Updating price data for {ticker}")
                 update_price_data(ticker, START_DATE, DATA_FOLDER)
-                updated_prices += 1
+                successful_count += 1
+                logger.info(f"Successfully updated price data for {ticker}")
+            else:
+                logger.info(f"Price data for {ticker} is up to date")
+            
+            # בדוק אם נדרש עדכון נתוני advanced
             advanced_file = os.path.join(DATA_FOLDER, ticker, f"{ticker}_advanced.json")
             needs_advanced_update = True
+            
             if os.path.exists(advanced_file):
                 try:
-                    with open(advanced_file, 'r') as f:
+                    with open(advanced_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
+                    # אם יש לפחות 10 שדות נתונים, נחשב שהמידע מלא
                     if len(data) >= 10:
                         needs_advanced_update = False
-                except:
-                    pass
+                        logger.info(f"Advanced data for {ticker} is complete ({len(data)} fields)")
+                except Exception as e:
+                    logger.warning(f"Error reading advanced file for {ticker}: {e}")
+            
+            # עדכן נתוני advanced אם נדרש
             if needs_advanced_update:
-                print(f"Updating advanced data for {ticker}")
-                if scrape_all_data(ticker, DATA_FOLDER):
-                    updated_advanced += 1
+                logger.info(f"Updating advanced data for {ticker}")
+                try:
+                    if scrape_all_data(ticker, DATA_FOLDER):
+                        logger.info(f"Successfully scraped advanced data for {ticker}")
+                    else:
+                        logger.warning(f"Failed to scrape advanced data for {ticker}")
+                except Exception as e:
+                    logger.error(f"Error scraping advanced data for {ticker}: {e}")
+            
+            # העבר ל-completed רק אחרי שעדכנו הכל
+            state_manager.mark_ticker_completed(ticker)
+            logger.info(f"Successfully processed {ticker} (price + advanced data)")
+                
         except Exception as e:
-            print(f"Error processing {ticker}: {e}")
-    with open(TODO_FILE, 'w') as f:
-        json.dump(todo, f)
-    with open(COMPLETED_FILE, 'w') as f:
-        json.dump(completed, f)
-    print(f"Daily processing completed. Updated {updated_prices} price data, {updated_advanced} advanced data.")
+            error_count += 1
+            retry_count = state_manager.increment_retry_count(ticker)
+            
+            if retry_count <= MAX_RETRIES:
+                logger.warning(f"Error processing {ticker} (attempt {retry_count}/{MAX_RETRIES}): {e}")
+            else:
+                logger.error(f"Max retries exceeded for {ticker}, removing from TODO: {e}")
+                state_manager.mark_ticker_completed(ticker)
+        
+        # שמור מצב כל 10 טיקרים
+        if i % 10 == 0:
+            state_manager.save_state()
+    
+    # שמור מצב סופי
+    state_manager.save_state()
+    
+    logger.info(f"Daily processing completed. Successfully processed: {successful_count}, Errors: {error_count}")
+    
+    # הדפס סטטיסטיקות
+    remaining_todo = len(state_manager.get_todo_tickers())
+    total_completed = len(state_manager.get_completed_tickers())
+    
+    logger.info(f"Status: {total_completed} completed, {remaining_todo} remaining")
+    
+    if remaining_todo == 0:
+        logger.info("🎉 All tickers have been processed successfully!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Daily stock data updater")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of tickers to process")
     args = parser.parse_args()
+    
+    setup_logging()
     process_tickers_daily(limit=args.limit)

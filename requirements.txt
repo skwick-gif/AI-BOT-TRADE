@@ -11,6 +11,7 @@ numpy>=1.26.4
 fredapi==0.5.0
 pandas-ta
 pyarrow
+py_vollib
 
 # Machine learning
 scikit-learn==1.5.1
