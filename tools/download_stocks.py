@@ -299,10 +299,19 @@ def clean_tickers(seq):
     ]
     
     for x in seq:
-        t = str(x).strip().upper().replace(".", "-")
-        
-        # בדוק אם זה טיקר תקני (אותיות בלבד, 1-5 תווים, עם אופציה לקו ותווים נוספים)
-        if not t or not re.fullmatch(r"[A-Z]{1,5}(?:-[A-Z]{1,3})?", t):
+        raw = str(x).strip()
+        if not raw:
+            continue
+        t = raw.upper()
+
+        # Immediately filter tickers that contain '.' or '-' if we want to exclude class shares or non-standard forms
+        # (e.g., BRK.A, BRK-A, RDS.A). These are commonly not wanted in normalized lists.
+        if '.' in raw or '-' in raw:
+            # Skip any ticker that contains dot or dash to avoid class share/suffix variations
+            continue
+
+        # Validate ticker characters: allow letters and digits, 1-5 chars (common US tickers)
+        if not re.fullmatch(r"[A-Z0-9]{1,5}", t):
             continue
             
         # סנן מניות בעייתיות - patterns
@@ -321,10 +330,6 @@ def clean_tickers(seq):
             
         # סנן תעודות אופציה (WARRANTS) - מסתיימות ב-W
         if t.endswith('W') and t not in ['SDOW', 'UDOW']:
-            continue
-            
-        # סנן מניות Class (יש קו באמצע) - BRK-A, BRK-B, META-A וכו'
-        if '-' in t:
             continue
             
         # סנן מניות קצרות מדי (תו בודד או שניים - לא תקניות)
