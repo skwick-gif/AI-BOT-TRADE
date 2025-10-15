@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>IBKRAdapterServer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\ibkr.proto" GrpcServices="Both" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.30.0" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.57.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CSharpAPI">
+      <HintPath>lib\CSharpAPI.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

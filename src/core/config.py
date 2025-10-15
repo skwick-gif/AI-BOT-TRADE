@@ -38,11 +38,22 @@ def load_configuration():
 
 def validate_api_keys(config):
     """Validate that required API keys are present"""
-    required_keys = ['PERPLEXITY_API_KEY', 'OPENAI_API_KEY']
+    required_keys = ['PERPLEXITY_API_KEY']  # Only check Perplexity for now
     missing_keys = []
     
     for key in required_keys:
-        if not config.get(key) or config[key] == f'your_{key.lower()}_here':
+        # Handle both dict-like access and ConfigManager access
+        if hasattr(config, 'perplexity'):
+            # ConfigManager case
+            if key == 'PERPLEXITY_API_KEY':
+                value = config.perplexity.api_key
+            else:
+                value = ''
+        else:
+            # Dict case
+            value = config.get(key, '')
+        
+        if not value or value == f'your_{key.lower()}_here':
             missing_keys.append(key)
     
     return missing_keys

@@ -59,14 +59,14 @@ def booktrade_ibkr(ticker: str, shares: int, action: str, order_type: str = "MKT
         logger.info(f"Attempting to {action} {shares} shares of {ticker} via IBKR")
         
         # Import here to avoid circular imports
-        from services.ibkr_service import IBKRService
+        from services.ibkr_adapter_service import IBKRAdapterService
         from core.config_manager import ConfigManager
 
         # Ensure we have a service instance only if auto-connect is allowed
         if not ibkr_service:
             if AUTO_CONNECT:
                 config = ConfigManager()
-                ibkr_service = IBKRService(config.ibkr)
+                ibkr_service = IBKRAdapterService(config.ibkr)
             else:
                 return TradeResult(
                     success=False,

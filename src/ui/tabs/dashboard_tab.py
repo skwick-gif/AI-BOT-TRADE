@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QFrame, QGridLayout, QScrollArea,
                              QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
 import qtawesome as qta
 
 # Import the macro widget and dashboard widget
@@ -144,7 +144,7 @@ class DashboardTab(QWidget):
             # Color code P&L
             pnl_item = QTableWidgetItem(pnl)
             pnl_pct_item = QTableWidgetItem(pnl_pct)
-            color = "#00ff88" if pnl.startswith("+") else "#ff4444"
+            color = QColor("#00ff88") if pnl.startswith("+") else QColor("#ff4444")
             pnl_item.setForeground(color)
             pnl_pct_item.setForeground(color)
             

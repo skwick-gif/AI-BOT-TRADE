@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+option csharp_namespace = "IBKRAdapterServer.Protos";
+
+package ibkr;
+
+// Messages for market data
+message MarketDataRequest {
+  string symbol = 1;
+  string exchange = 2;
+}
+
+message MarketDataResponse {
+  string symbol = 1;
+  double price = 2;
+  int64 volume = 3;
+  // Add more fields as needed
+}
+
+// Messages for account
+message AccountRequest {
+  string account_id = 1;
+}
+
+message AccountResponse {
+  string account = 1;
+  double totalCash = 2;
+  double netLiquidation = 3;
+  double buyingPower = 4;
+  double availableFunds = 5;
+  double equityWithLoan = 6;
+  double excessLiquidity = 7;
+  int32 dayTradesRemaining = 8;
+  string accountType = 9;
+}
+
+// Messages for orders
+message PlaceOrderRequest {
+  string symbol = 1;
+  string action = 2; // BUY, SELL
+  int32 quantity = 3;
+  double price = 4;
+}
+
+message PlaceOrderResponse {
+  string order_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Messages for connection
+message ConnectRequest {
+  string host = 1;
+  int32 port = 2;
+  int32 client_id = 3;
+}
+
+message ConnectResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ConnectionStatusRequest {
+}
+
+message ConnectionStatusResponse {
+  bool connected = 1;
+  string message = 2;
+}
+
+// Service definition
+service IBKRService {
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  rpc GetConnectionStatus(ConnectionStatusRequest) returns (ConnectionStatusResponse);
+  rpc StreamMarketData(MarketDataRequest) returns (stream MarketDataResponse);
+  rpc GetAccountInfo(AccountRequest) returns (AccountResponse);
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+}

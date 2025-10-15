@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "dgSpecHash": "cDd39l+1z/4=",
+  "success": true,
+  "projectFilePath": "D:\\AI BOT TRADE\\tools\\InterReactBridge\\InterReactBridge.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.bcl.asyncinterfaces\\6.0.0\\microsoft.bcl.asyncinterfaces.6.0.0.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.dependencyinjection\\8.0.1\\microsoft.extensions.dependencyinjection.8.0.1.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.dependencyinjection.abstractions\\8.0.2\\microsoft.extensions.dependencyinjection.abstractions.8.0.2.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.logging\\8.0.1\\microsoft.extensions.logging.8.0.1.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.logging.abstractions\\8.0.2\\microsoft.extensions.logging.abstractions.8.0.2.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.options\\8.0.2\\microsoft.extensions.options.8.0.2.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\microsoft.extensions.primitives\\8.0.0\\microsoft.extensions.primitives.8.0.0.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\nodatime\\3.2.0\\nodatime.3.2.0.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\rxsockets\\7.0.0\\rxsockets.7.0.0.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\stringification\\4.0.1\\stringification.4.0.1.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\system.linq.async\\6.0.1\\system.linq.async.6.0.1.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\system.reactive\\6.0.1\\system.reactive.6.0.1.nupkg.sha512",
+    "C:\\Users\\PC\\.nuget\\packages\\interreact\\0.6.0\\interreact.0.6.0.nupkg.sha512"
+  ],
+  "logs": []
+}

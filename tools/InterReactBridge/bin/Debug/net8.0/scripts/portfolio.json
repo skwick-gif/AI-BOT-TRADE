@@ -1,0 +1,105 @@
+﻿{
+    "value":  [
+                  {
+                      "account":  "U19784085",
+                      "symbol":  "TSLA",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  10,
+                      "averageCost":  217.53,
+                      "marketValue":  2175.30
+                  },
+                  {
+                      "account":  "U19784085",
+                      "symbol":  "SAVA",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  200,
+                      "averageCost":  3.12575,
+                      "marketValue":  625.15000
+                  },
+                  {
+                      "account":  "U19784075",
+                      "symbol":  "MSTR",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  5,
+                      "averageCost":  336.08,
+                      "marketValue":  1680.40
+                  },
+                  {
+                      "account":  "U19784079",
+                      "symbol":  "TNA",
+                      "securityType":  "OPT",
+                      "exchange":  "Unknown",
+                      "currency":  "USD",
+                      "position":  2,
+                      "averageCost":  180,
+                      "marketValue":  360
+                  },
+                  {
+                      "account":  "U19784085",
+                      "symbol":  "TNA",
+                      "securityType":  "STK",
+                      "exchange":  "ARCA",
+                      "currency":  "USD",
+                      "position":  190,
+                      "averageCost":  42.70748685,
+                      "marketValue":  8114.42250150
+                  },
+                  {
+                      "account":  "U19784079",
+                      "symbol":  "TSLA",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  10,
+                      "averageCost":  218.474,
+                      "marketValue":  2184.740
+                  },
+                  {
+                      "account":  "U19784075",
+                      "symbol":  "NVDA",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  15,
+                      "averageCost":  128.62033335,
+                      "marketValue":  1929.30500025
+                  },
+                  {
+                      "account":  "U19784085",
+                      "symbol":  "MSTR",
+                      "securityType":  "STK",
+                      "exchange":  "NASDAQ",
+                      "currency":  "USD",
+                      "position":  2,
+                      "averageCost":  337,
+                      "marketValue":  674
+                  },
+                  {
+                      "account":  "U19784079",
+                      "symbol":  "TNA",
+                      "securityType":  "STK",
+                      "exchange":  "ARCA",
+                      "currency":  "USD",
+                      "position":  130,
+                      "averageCost":  43.97628845,
+                      "marketValue":  5716.91749850
+                  },
+                  {
+                      "account":  "U19784075",
+                      "symbol":  "TNA",
+                      "securityType":  "STK",
+                      "exchange":  "ARCA",
+                      "currency":  "USD",
+                      "position":  55,
+                      "averageCost":  37.51272725,
+                      "marketValue":  2063.19999875
+                  }
+              ],
+    "Count":  10
+}

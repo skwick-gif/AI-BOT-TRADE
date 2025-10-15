@@ -1,0 +1,473 @@
+﻿{
+    "value":  [
+                  {
+                      "tag":  "AccountType",
+                      "value":  "INDIVIDUAL",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "Cushion",
+                      "value":  "0.431304",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "DayTradesRemaining",
+                      "value":  "3",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadNextChange",
+                      "value":  "1760385600",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AccruedCash",
+                      "value":  "-3.60",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AvailableFunds",
+                      "value":  "2385.52",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "BuyingPower",
+                      "value":  "9542.09",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "EquityWithLoanValue",
+                      "value":  "5734.87",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "ExcessLiquidity",
+                      "value":  "2473.54",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullAvailableFunds",
+                      "value":  "2385.52",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullExcessLiquidity",
+                      "value":  "2473.54",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullInitMarginReq",
+                      "value":  "3349.34",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullMaintMarginReq",
+                      "value":  "3261.48",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "GrossPositionValue",
+                      "value":  "6886.01",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "InitMarginReq",
+                      "value":  "3349.34",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadAvailableFunds",
+                      "value":  "2385.52",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadExcessLiquidity",
+                      "value":  "2473.54",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadInitMarginReq",
+                      "value":  "3349.34",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadMaintMarginReq",
+                      "value":  "3261.48",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "MaintMarginReq",
+                      "value":  "3261.48",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "NetLiquidation",
+                      "value":  "5735.02",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "PreviousDayEquityWithLoanValue",
+                      "value":  "5485.71",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTEquity",
+                      "value":  "5735.02",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTMargin",
+                      "value":  "3443.00",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "SMA",
+                      "value":  "2478.52",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "TotalCashValue",
+                      "value":  "-1147.39",
+                      "account":  "U19784075",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AccountType",
+                      "value":  "INDIVIDUAL",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "Cushion",
+                      "value":  "1",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "DayTradesRemaining",
+                      "value":  "3",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadNextChange",
+                      "value":  "1760385600",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AccruedCash",
+                      "value":  "1.00",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AvailableFunds",
+                      "value":  "4486.86",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "BuyingPower",
+                      "value":  "17947.46",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "EquityWithLoanValue",
+                      "value":  "10491.86",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "ExcessLiquidity",
+                      "value":  "7137.97",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullAvailableFunds",
+                      "value":  "4486.86",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullExcessLiquidity",
+                      "value":  "7137.97",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullInitMarginReq",
+                      "value":  "6005.00",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullMaintMarginReq",
+                      "value":  "3353.89",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "GrossPositionValue",
+                      "value":  "10384.38",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "InitMarginReq",
+                      "value":  "6005.00",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadAvailableFunds",
+                      "value":  "4486.86",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadExcessLiquidity",
+                      "value":  "7137.97",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadInitMarginReq",
+                      "value":  "6005.00",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadMaintMarginReq",
+                      "value":  "3353.89",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "MaintMarginReq",
+                      "value":  "3353.89",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "NetLiquidation",
+                      "value":  "10689.74",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "PreviousDayEquityWithLoanValue",
+                      "value":  "10001.36",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTEquity",
+                      "value":  "10492.86",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTMargin",
+                      "value":  "5093.75",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "SMA",
+                      "value":  "6180.90",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "TotalCashValue",
+                      "value":  "304.36",
+                      "account":  "U19784079",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AccountType",
+                      "value":  "INDIVIDUAL",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "Cushion",
+                      "value":  "0.29463",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "DayTradesRemaining",
+                      "value":  "3",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadNextChange",
+                      "value":  "1760385600",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AccruedCash",
+                      "value":  "-8.82",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "AvailableFunds",
+                      "value":  "3254.81",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "BuyingPower",
+                      "value":  "13019.23",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "EquityWithLoanValue",
+                      "value":  "11820.05",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "ExcessLiquidity",
+                      "value":  "3482.54",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullAvailableFunds",
+                      "value":  "3254.81",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullExcessLiquidity",
+                      "value":  "3482.54",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullInitMarginReq",
+                      "value":  "8565.24",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "FullMaintMarginReq",
+                      "value":  "8337.51",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "GrossPositionValue",
+                      "value":  "14350.56",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "InitMarginReq",
+                      "value":  "8565.24",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadAvailableFunds",
+                      "value":  "3254.81",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadExcessLiquidity",
+                      "value":  "3482.54",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadInitMarginReq",
+                      "value":  "8565.24",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "LookAheadMaintMarginReq",
+                      "value":  "8337.51",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "MaintMarginReq",
+                      "value":  "8337.51",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "NetLiquidation",
+                      "value":  "11820.05",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "PreviousDayEquityWithLoanValue",
+                      "value":  "11105.07",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTEquity",
+                      "value":  "11820.05",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "RegTMargin",
+                      "value":  "7175.28",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "SMA",
+                      "value":  "5774.36",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  },
+                  {
+                      "tag":  "TotalCashValue",
+                      "value":  "-2521.69",
+                      "account":  "U19784085",
+                      "currency":  "USD"
+                  }
+              ],
+    "Count":  78
+}

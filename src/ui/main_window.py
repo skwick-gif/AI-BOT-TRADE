@@ -33,6 +33,10 @@ class MainWindow(QMainWindow):
         # Set window icon
         self.setWindowIcon(qta.icon('fa5s.chart-line', color='#00ff88'))
         
+        # Initialize IBKR service
+        from services.ibkr_adapter_service import IBKRAdapterService
+        self.ibkr_service = IBKRAdapterService(config.ibkr)
+        
         # Initialize UI
         self.init_ui()
         
@@ -41,6 +45,9 @@ class MainWindow(QMainWindow):
         
         # Check API keys
         self.check_api_keys()
+        
+        # Check initial IBKR connection status
+        self.check_initial_connection()
     
     def init_ui(self):
         """Initialize the user interface"""
@@ -189,6 +196,22 @@ class MainWindow(QMainWindow):
         else:
             self.status_message.emit("All API keys configured")
     
+    def check_initial_connection(self):
+        """Check initial IBKR connection status"""
+        try:
+            if self.ibkr_service.is_connected():
+                self.connection_status.setText("🟢 Connected")
+                self.connection_status.setStyleSheet("color: #00ff88; font-weight: bold;")
+                self.status_message.emit("IBKR connected")
+            else:
+                self.connection_status.setText("🔴 Disconnected")
+                self.connection_status.setStyleSheet("color: #ff4444; font-weight: bold;")
+                self.status_message.emit("IBKR disconnected")
+        except Exception as e:
+            self.connection_status.setText("🔴 Error")
+            self.connection_status.setStyleSheet("color: #ff4444; font-weight: bold;")
+            self.status_message.emit(f"IBKR status check error: {e}")
+    
     def connect_ibkr(self, force: bool = False):
         """Connect to IBKR. Must be forced (user action) or enabled via AUTO_CONNECT_IBKR env var."""
         # Disallow programmatic auto-connect unless forced or env var enabled
@@ -201,25 +224,62 @@ class MainWindow(QMainWindow):
                 pass
             return
 
-        # This will be implemented with the IBKR connection logic
+        # Connect using our adapter service
         self.status_message.emit("Connecting to IBKR...")
         self.connection_status.setText("🟡 Connecting...")
         self.connection_status.setStyleSheet("color: #ffaa00; font-weight: bold;")
 
-        # Simulate connection (replace with actual IBKR connection)
-        QTimer.singleShot(2000, self.on_ibkr_connected)
+        # Run connection in thread to avoid blocking UI
+        from PyQt6.QtCore import QThread, pyqtSignal
+        class ConnectThread(QThread):
+            finished = pyqtSignal(bool, str)
+            
+            def run(self):
+                try:
+                    success = self.parent().ibkr_service.connect()
+                    self.finished.emit(success, "" if success else "Connection failed")
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+        
+        thread = ConnectThread()
+        thread.parent = lambda: self
+        thread.finished.connect(self.on_ibkr_connect_result)
+        thread.start()
+    
+    def on_ibkr_connect_result(self, success: bool, error: str):
+        """Handle IBKR connection result"""
+        if success:
+            self.on_ibkr_connected()
+        else:
+            self.connection_status.setText("🔴 Connection Failed")
+            self.connection_status.setStyleSheet("color: #ff4444; font-weight: bold;")
+            self.status_message.emit(f"IBKR connection failed: {error}")
     
     def on_ibkr_connected(self):
         """Handle IBKR connection success"""
         self.connection_status.setText("🟢 Connected")
         self.connection_status.setStyleSheet("color: #00ff88; font-weight: bold;")
         self.status_message.emit("IBKR connected successfully")
+        
+        # Update AI trading widget
+        trading_tab = self.tab_widget.widget(1)  # Trading tab
+        if hasattr(trading_tab, 'ai_widget'):
+            trading_tab.ai_widget.set_ibkr_service(self.ibkr_service)
+            trading_tab.ai_widget.set_ibkr_status(True)
     
     def disconnect_ibkr(self):
         """Disconnect from IBKR"""
+        if hasattr(self, 'ibkr_service') and self.ibkr_service:
+            self.ibkr_service.disconnect()
+        
         self.connection_status.setText("🔴 Disconnected")
         self.connection_status.setStyleSheet("color: #ff4444; font-weight: bold;")
         self.status_message.emit("IBKR disconnected")
+        
+        # Update AI trading widget
+        trading_tab = self.tab_widget.widget(1)  # Trading tab
+        if hasattr(trading_tab, 'ai_widget'):
+            trading_tab.ai_widget.set_ibkr_status(False)
     
     def refresh_data(self):
         """Refresh all data"""
