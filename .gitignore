@@ -241,3 +241,5 @@ __marimo__/
 tools/csharp_adapter_skeleton/bin/
 tools/csharp_adapter_skeleton/obj/
 
+
+.venv/
