@@ -1,4 +1,8 @@
 {
-  "accountSummaryCount": 78,
-  "time": "2025-10-13T15:36:14.8135697Z"
+  "connected": false,
+  "host": "127.0.0.1",
+  "port": 4002,
+  "clientId": 1,
+  "error": "connect timeout",
+  "time": "2025-10-16T04:12:17.3647349Z"
 }

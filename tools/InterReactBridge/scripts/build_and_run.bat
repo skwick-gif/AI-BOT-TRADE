@@ -1,7 +1,13 @@
 @echo off
-REM Build and run the original InterReactBridge on http://localhost:5000
+REM Build and run the InterReactBridge; honor IBKR_BRIDGE_URL if set, default to http://localhost:5080
 setlocal
 cd /d "%~dp0.."
+
+set "BRIDGE_URL=%IBKR_BRIDGE_URL%"
+if "%BRIDGE_URL%"=="" set "BRIDGE_URL=http://localhost:5080"
+
+echo Using URL: %BRIDGE_URL%
+
 echo Restoring packages...
 dotnet restore
 if errorlevel 1 (
@@ -16,7 +22,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Starting InterReactBridge on http://localhost:5000
-dotnet run --urls http://localhost:5000
+echo Starting InterReactBridge on %BRIDGE_URL%
+dotnet run --urls %BRIDGE_URL%
 
 endlocal

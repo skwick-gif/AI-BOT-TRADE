@@ -39,31 +39,49 @@ echo Activating virtual environment...
 call .venv\Scripts\activate.bat
 
 echo Upgrading pip...
-%PYTHON_EXE% -m pip install --upgrade pip
+%PYTHON_EXE% -m pip install --upgrade pip setuptools wheel
 
-echo Installing dependencies from requirements file...
-if exist requirements.txt (
-    %PYTHON_EXE% -m pip install -r requirements.txt
+echo Installing base dependencies...
+if exist requirements.base.txt (
+    %PYTHON_EXE% -m pip install -r requirements.base.txt
     if errorlevel 1 (
-        echo ERROR: Failed to install from requirements.txt!
-        echo Please check the requirements file and try again.
+        echo ERROR: Failed installing base requirements!
+        echo Tip: Ensure you have Microsoft C++ Build Tools installed for packages requiring wheels.
+        echo       https://visualstudio.microsoft.com/visual-cpp-build-tools/
         pause
         exit /b 1
     )
 ) else (
-    echo ERROR: requirements.txt not found!
-    echo Please ensure requirements.txt exists in the project root.
-    pause
-    exit /b 1
+    echo Base file not found, falling back to requirements.txt
+    if exist requirements.txt (
+        %PYTHON_EXE% -m pip install -r requirements.txt
+        if errorlevel 1 (
+            echo ERROR: Failed installing from requirements.txt!
+            pause
+            exit /b 1
+        )
+    ) else (
+        echo ERROR: No requirements file found!
+        pause
+        exit /b 1
+    )
 )
 
 echo Ensuring all packages are properly installed...
-python -m pip install --upgrade pip setuptools wheel
+%PYTHON_EXE% -m pip install --upgrade pip setuptools wheel
 
 echo Verifying critical packages...
-%PYTHON_EXE% -c "import PyQt6; print('PyQt6 OK')" || (
-    echo ERROR: PyQt6 not installed properly!
-    %PYTHON_EXE% -m pip install PyQt6==6.7.1
+%PYTHON_EXE% -c "import PyQt6; print('PyQt6 OK')"
+if errorlevel 1 (
+    echo PyQt6 install appears incomplete. Retrying explicit install...
+    %PYTHON_EXE% -m pip install --force-reinstall --upgrade PyQt6==6.7.1 PyQt6-Qt6==6.7.3
+)
+
+REM Common Windows build pain points (lxml)
+%PYTHON_EXE% -c "import lxml"
+if errorlevel 1 (
+    echo lxml not importable. Installing prebuilt wheel if available...
+    %PYTHON_EXE% -m pip install --only-binary=:all: lxml || %PYTHON_EXE% -m pip install lxml
 )
 
 echo Creating necessary directories...
@@ -71,6 +89,11 @@ if not exist "models" mkdir models
 if not exist "cache" mkdir cache
 if not exist "logs" mkdir logs
 if not exist "data" mkdir data
+
+echo.
+echo Optional installations (can be run later):
+echo   1^)^) ML extras:    .venv\Scripts\pip.exe install -r requirements.extras-ml.txt
+echo   2^)^) Dev extras:   .venv\Scripts\pip.exe install -r requirements.extras-dev.txt
 
 echo ========================================
 echo Installation Complete!

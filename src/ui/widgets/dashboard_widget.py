@@ -6,7 +6,7 @@ Main overview widget showing key metrics and market data
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QScrollArea, QTableWidget,
-    QTableWidgetItem, QHeaderView, QCheckBox, QSpinBox
+    QTableWidgetItem, QHeaderView, QCheckBox, QSpinBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette
@@ -247,6 +247,14 @@ class DashboardWidget(QWidget):
         
         content_layout.addLayout(first_row_layout)
         
+        # Live ticker (new)
+        try:
+            self.create_live_ticker()
+            content_layout.addWidget(self.live_frame)
+        except Exception as e:
+            # Do not break dashboard if live ticker init fails
+            self.logger.warning(f"Live ticker unavailable: {e}")
+
         # Portfolio summary (moved up)
         self.create_portfolio_summary()
         content_layout.addWidget(self.portfolio_frame)
@@ -264,6 +272,84 @@ class DashboardWidget(QWidget):
         scroll_area.setWidget(content_widget)
         layout.addWidget(scroll_area)
     
+    def create_live_ticker(self):
+        """Create a lightweight live ticker section with optional sparkline."""
+        self.live_frame = QFrame()
+        self.live_frame.setFrameStyle(QFrame.Shape.Box)
+        self.live_frame.setMinimumHeight(100)
+
+        v = QVBoxLayout(self.live_frame)
+        v.setContentsMargins(15, 10, 15, 10)
+        v.setSpacing(8)
+
+        title = QLabel("Live Ticker")
+        tf = QFont()
+        tf.setPointSize(12)
+        tf.setBold(True)
+        title.setFont(tf)
+        v.addWidget(title)
+
+        # Controls row
+        ctl = QHBoxLayout()
+        ctl.setSpacing(10)
+
+        ctl.addWidget(QLabel("Symbol:"))
+        self.live_symbol_edit = QLineEdit()
+        default_symbol = "AAPL"
+        try:
+            ds = self.config.ui.default_symbols or []
+            if len(ds) > 0:
+                default_symbol = ds[0]
+        except Exception:
+            pass
+        self.live_symbol_edit.setText(default_symbol)
+        self.live_symbol_edit.setFixedWidth(100)
+        ctl.addWidget(self.live_symbol_edit)
+
+        self.live_status_label = QLabel("⏸️ Idle")
+        ctl.addWidget(self.live_status_label)
+
+        self.live_start_btn = QPushButton("▶ Start Live")
+        self.live_start_btn.setFixedSize(110, 28)
+        self.live_start_btn.clicked.connect(self.toggle_live_stream)
+        ctl.addWidget(self.live_start_btn)
+
+        ctl.addStretch()
+        v.addLayout(ctl)
+
+        # Last price row
+        price_row = QHBoxLayout()
+        price_row.addWidget(QLabel("Last Price:"))
+        self.live_price_label = QLabel("-")
+        pf = QFont()
+        pf.setPointSize(14)
+        pf.setBold(True)
+        self.live_price_label.setFont(pf)
+        price_row.addWidget(self.live_price_label)
+        price_row.addStretch()
+        v.addLayout(price_row)
+
+        # Optional sparkline using pyqtgraph
+        self._live_plot = None
+        self._live_curve = None
+        try:
+            import pyqtgraph as pg  # type: ignore
+            self._live_plot = pg.PlotWidget()
+            self._live_plot.setBackground('k')
+            self._live_plot.showGrid(x=False, y=True, alpha=0.2)
+            self._live_plot.setMaximumHeight(120)
+            self._live_curve = self._live_plot.plot(pen=pg.mkPen('#14a085', width=2))
+            v.addWidget(self._live_plot)
+        except Exception:
+            # pyqtgraph not installed; sparkline omitted
+            pass
+
+        # Streaming state
+        self._live_prices = []  # keep last N prices
+        self._live_stream_thread = None
+        self._live_worker = None
+        self._live_stop_flag = None
+
     def create_account_metrics(self):
         """Create account metrics section"""
         self.account_frame = QFrame()
@@ -298,6 +384,98 @@ class DashboardWidget(QWidget):
         metrics_layout.addStretch()
         
         layout.addLayout(metrics_layout)
+
+    # -------- Live stream controls --------
+    def toggle_live_stream(self):
+        try:
+            if getattr(self, '_live_stream_thread', None):
+                self.stop_live_stream()
+            else:
+                self.start_live_stream()
+        except Exception as e:
+            self.logger.error(f"Live stream toggle error: {e}")
+
+    def start_live_stream(self):
+        if not (self.ibkr_service and self.ibkr_service.is_connected()):
+            self.live_status_label.setText("❌ Not connected")
+            return
+        symbol = (self.live_symbol_edit.text() or "AAPL").strip().upper()
+        if not symbol:
+            return
+        # Prepare stop flag and thread
+        self._live_stop_flag = [False]
+        from PyQt6.QtCore import QObject, pyqtSignal, QThread
+
+        class _LiveWorker(QObject):
+            tick = pyqtSignal(dict)
+            done = pyqtSignal()
+            def __init__(self, svc, sym, stop_flag):
+                super().__init__()
+                self._svc = svc
+                self._sym = sym
+                self._stop = stop_flag
+            def run(self):
+                try:
+                    def on_tick(data):
+                        try:
+                            self.tick.emit(data)
+                        except Exception:
+                            pass
+                    self._svc.stream_live_data(self._sym, 'STK', 'SMART', on_tick=on_tick, stop_flag=self._stop)
+                finally:
+                    self.done.emit()
+
+        self._live_stream_thread = QThread(self)
+        self._live_worker = _LiveWorker(self.ibkr_service, symbol, self._live_stop_flag)
+        self._live_worker.moveToThread(self._live_stream_thread)
+        self._live_stream_thread.started.connect(self._live_worker.run)
+        self._live_worker.tick.connect(self.on_live_tick)
+        self._live_worker.done.connect(self.on_live_done)
+        self._live_worker.done.connect(self._live_stream_thread.quit)
+        self._live_stream_thread.start()
+        self.live_status_label.setText(f"🟢 Live: {symbol}")
+        self.live_start_btn.setText("⏹ Stop Live")
+
+    def stop_live_stream(self):
+        try:
+            if self._live_stop_flag is not None:
+                self._live_stop_flag[0] = True
+        except Exception:
+            pass
+        # Thread will cleanly exit via done signal
+        self.live_status_label.setText("⏸️ Idle")
+        self.live_start_btn.setText("▶ Start Live")
+        self._live_stream_thread = None
+        self._live_worker = None
+
+    def on_live_tick(self, data: dict):
+        try:
+            price = float(data.get('Price')) if 'Price' in data else float(data.get('price', 'nan'))
+            if price != price:  # NaN check
+                return
+            self.live_price_label.setText(f"{price:.4f}")
+            # Update sparkline buffer
+            self._live_prices.append(price)
+            if len(self._live_prices) > 300:
+                self._live_prices = self._live_prices[-300:]
+            if self._live_curve is not None:
+                try:
+                    import numpy as np  # type: ignore
+                    x = np.arange(len(self._live_prices))
+                    y = np.array(self._live_prices, dtype=float)
+                    self._live_curve.setData(x, y)
+                except Exception:
+                    # If numpy not available, setData with list indices
+                    self._live_curve.setData(list(range(len(self._live_prices))), self._live_prices)
+        except Exception as e:
+            # keep UI resilient
+            self.logger.debug(f"Live tick parse error: {e}")
+
+    def on_live_done(self):
+        self.live_status_label.setText("⏸️ Idle")
+        self.live_start_btn.setText("▶ Start Live")
+        self._live_stream_thread = None
+        self._live_worker = None
     
     def create_portfolio_summary(self):
         """Create portfolio summary section"""
@@ -702,6 +880,12 @@ class DashboardWidget(QWidget):
         self.logger.info("IBKR service set for dashboard")
         # Update data immediately
         self.update_data()
+        # Enable/disable live controls
+        try:
+            connected = bool(self.ibkr_service and self.ibkr_service.is_connected())
+            self.live_start_btn.setEnabled(connected)
+        except Exception:
+            pass
     
     def refresh_data(self):
         """Manually refresh all data"""

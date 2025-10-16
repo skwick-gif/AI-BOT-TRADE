@@ -1,0 +1,32 @@
+# Base dependencies needed to run the PyQt app and IBKR adapter client
+PyQt6==6.7.1
+PyQt6-Qt6==6.7.3
+
+# Networking and config
+requests==2.32.3
+python-dotenv==1.0.1
+pydantic==2.8.2
+rich==13.7.1
+nest-asyncio
+
+# Data stack (moderate footprint)
+pandas>=2.2.2
+numpy>=1.26.4
+pyarrow
+openpyxl==3.1.5
+xlsxwriter==3.2.0
+
+# Market data helpers
+yfinance==0.2.28
+pandas-ta
+beautifulsoup4==4.12.3
+# lxml is optional; comment out to avoid build on Windows/Python 3.13 where wheels may be missing
+# lxml==5.2.2
+
+# Visualization
+matplotlib==3.9.2
+plotly==5.23.0
+pyqtgraph==0.13.7
+
+# Legacy client kept for optional tools; main UI uses REST adapter
+ib_insync==0.9.86

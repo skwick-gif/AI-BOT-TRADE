@@ -243,3 +243,10 @@ tools/csharp_adapter_skeleton/obj/
 
 
 .venv/
+
+# Runtime logs and status files
+tools/InterReactBridge/bridge_run.log
+tools/InterReactBridge/bridge_build.log
+tools/InterReactBridge/interreact_status.json
+interreact_status.json
+logs/

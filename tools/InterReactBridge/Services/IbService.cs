@@ -12,6 +12,28 @@ public class IbService
     private readonly ILogger<IbService> _logger;
     private IInterReactClient? _client;
     private string? _accountCode;
+    private string? _lastError;
+    private string? _lastErrorCode;
+    private bool _connected;
+    private DateTime? _lastAttemptUtc;
+    private string? _lastHost;
+    private int _lastPort;
+    private int _lastClientId;
+
+    public string? LastError => _lastError;
+    public bool IsConnected => _connected;
+    public object GetStatus() => new
+    {
+        connected = _connected,
+        errorCode = _lastErrorCode,
+        errorMessage = _lastError,
+        hint = GetHintFromErrorCode(_lastErrorCode),
+        account = _accountCode,
+        lastAttemptUtc = _lastAttemptUtc,
+        host = _lastHost,
+        port = _lastPort,
+        clientId = _lastClientId
+    };
 
     public IbService(ILogger<IbService> logger)
     {
@@ -22,35 +44,109 @@ public class IbService
     {
         try
         {
-            _client = await InterReactClient.ConnectAsync(options =>
+            _logger.LogInformation("/connect requested: {Host}:{Port} clientId={ClientId}", host, port, clientId);
+            _lastHost = host; _lastPort = port; _lastClientId = clientId; _lastAttemptUtc = DateTime.UtcNow; _connected = false; _lastError = null; _lastErrorCode = null;
+
+            // Preflight: ensure TCP port is reachable before attempting InterReact connect
+            try
+            {
+                using var tcp = new System.Net.Sockets.TcpClient();
+                var preflightCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(800));
+                var preflightTask = tcp.ConnectAsync(host, port);
+                var done = await Task.WhenAny(preflightTask, Task.Delay(Timeout.Infinite, preflightCts.Token));
+                if (done != preflightTask || !tcp.Connected)
+                {
+                    _logger.LogWarning("TCP preflight failed to {Host}:{Port}", host, port);
+                    _lastErrorCode = "TCP_PREFLIGHT_FAILED";
+                    _lastError = "tcp preflight failed";
+                    await PersistStatusAsync();
+                    return false;
+                }
+            }
+            catch (Exception pex)
+            {
+                _logger.LogWarning(pex, "TCP preflight exception to {Host}:{Port}", host, port);
+                _lastErrorCode = "TCP_PREFLIGHT_EXCEPTION";
+                _lastError = "tcp preflight exception";
+                await PersistStatusAsync();
+                return false;
+            }
+
+            // Enforce a connection timeout so HTTP request won't hang indefinitely
+            var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+            var connectTask = InterReactClient.ConnectAsync(options =>
             {
                 options.TwsIpAddress = System.Net.IPAddress.Parse(host);
                 options.IBPortAddresses = new[] { port };
                 options.TwsClientId = clientId;
             });
 
+            var completed = await Task.WhenAny(connectTask, Task.Delay(Timeout.Infinite, connectCts.Token));
+            if (completed != connectTask)
+            {
+                _logger.LogWarning("ConnectAsync timed out after 20s to {Host}:{Port}", host, port);
+                _lastErrorCode = "CONNECT_TIMEOUT";
+                _lastError = "connect timeout (20s)";
+                await PersistStatusAsync();
+                return false;
+            }
+            _client = await connectTask; // propagate exception if any
+
             // Try to get managed accounts with timeout
             try
             {
-                var cts = new CancellationTokenSource(5000);
+                var cts = new CancellationTokenSource(3000);
                 var managedAccounts = await _client.Response.OfType<ManagedAccounts>().FirstAsync().ToTask(cts.Token);
                 _accountCode = managedAccounts.Accounts.Split(',')[0];
                 _logger.LogInformation("Connected to IBKR at {Host}:{Port}, Account: {Account}", host, port, _accountCode);
+                _connected = true;
+                _lastErrorCode = null;
+                _lastError = null;
             }
             catch
             {
                 _accountCode = null;
                 _logger.LogInformation("Connected to IBKR at {Host}:{Port}, no account code received", host, port);
+                _connected = true; // connected but account not yet received
+                _lastErrorCode = null;
+                _lastError = null;
             }
-
-            await WriteConnectionStatusAsync(new { connected = true, host, port, clientId, account = _accountCode, time = DateTime.UtcNow });
+            await PersistStatusAsync();
             return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to IBKR");
-            await WriteConnectionStatusAsync(new { connected = false, host, port, clientId, error = ex.Message, time = DateTime.UtcNow });
+            _lastErrorCode = "CONNECT_EXCEPTION";
+            _lastError = ex.Message;
+            await PersistStatusAsync();
             return false;
+        }
+    }
+
+    public (string? host, int port, int clientId) GetLastEndpoint() => (_lastHost, _lastPort, _lastClientId);
+
+    public async Task<object> ProbeTcpAsync(string host, int port, int timeoutMs = 800)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(Math.Max(100, timeoutMs)));
+            var connectTask = tcp.ConnectAsync(host, port);
+            var done = await Task.WhenAny(connectTask, Task.Delay(Timeout.Infinite, cts.Token));
+            sw.Stop();
+            if (done == connectTask && tcp.Connected)
+            {
+                return new { reachable = true, latencyMs = sw.ElapsedMilliseconds };
+            }
+            return new { reachable = false, latencyMs = sw.ElapsedMilliseconds, errorCode = "TCP_PREFLIGHT_FAILED", errorMessage = "tcp preflight failed" };
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            return new { reachable = false, latencyMs = sw.ElapsedMilliseconds, errorCode = "TCP_PREFLIGHT_EXCEPTION", errorMessage = ex.Message };
         }
     }
 
@@ -393,5 +489,23 @@ public class IbService
         {
             // ignore write failures to avoid throwing during normal operation
         }
+    }
+
+    private Task PersistStatusAsync()
+    {
+        // persist the standardized status payload
+        return WriteConnectionStatusAsync(GetStatus());
+    }
+
+    private static string? GetHintFromErrorCode(string? code)
+    {
+        return code switch
+        {
+            "TCP_PREFLIGHT_FAILED" => "Port closed or blocked. Ensure IB Gateway/TWS is running and listening on this port.",
+            "CONNECT_TIMEOUT" => "Likely API disabled or untrusted IP. In TWS/IB Gateway: enable 'Enable ActiveX and Socket Clients' and add 127.0.0.1 to Trusted IPs.",
+            "TCP_PREFLIGHT_EXCEPTION" => "Host unreachable. Verify host and network; use 127.0.0.1 when running locally.",
+            "CONNECT_EXCEPTION" => "Connection error. Check IB Gateway/TWS API settings and logs.",
+            _ => null
+        };
     }
 }

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("IBKRAdapterServer")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9b41bef25f7d24dff96bea31a1d2e81f1cf0def7")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6fdadb0e5ed3f2865c08944f1536977a5996e60d")]
 [assembly: System.Reflection.AssemblyProductAttribute("IBKRAdapterServer")]
 [assembly: System.Reflection.AssemblyTitleAttribute("IBKRAdapterServer")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
