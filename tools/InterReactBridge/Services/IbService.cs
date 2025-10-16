@@ -508,4 +508,157 @@ public class IbService
             _ => null
         };
     }
+
+    // -----------------------------
+    // Advanced order helpers
+    // -----------------------------
+
+    public async Task<object> PlaceBracketOrderAsync(InterReactBridge.Models.BracketOrderRequest req)
+    {
+        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+
+        var contract = new Contract()
+        {
+            Symbol = req.Symbol,
+            SecurityType = req.SecType,
+            Exchange = req.Exchange,
+            Currency = "USD"
+        };
+
+        // Parent (entry)
+        var entryOrder = new Order()
+        {
+            Action = req.Action.ToUpper() == "BUY" ? OrderAction.Buy : OrderAction.Sell,
+            TotalQuantity = req.Quantity,
+            OrderType = (req.EntryType?.ToUpper()) switch
+            {
+                "MKT" => OrderTypes.Market,
+                _ => OrderTypes.Limit
+            },
+            LimitPrice = (req.EntryType?.ToUpper() == "LMT") ? (req.EntryPrice ?? 0) : 0,
+            OutsideRth = req.OutsideRth,
+            Transmit = false
+        };
+        var parentId = _client.Request.GetNextId();
+        _client.Request.PlaceOrder(parentId, entryOrder, contract);
+
+        // Take profit child
+        int tpId = -1;
+        if (req.TakeProfitPrice.HasValue)
+        {
+            var tp = new Order()
+            {
+                Action = entryOrder.Action == OrderAction.Buy ? OrderAction.Sell : OrderAction.Buy,
+                TotalQuantity = req.Quantity,
+                OrderType = OrderTypes.Limit,
+                LimitPrice = req.TakeProfitPrice.Value,
+                ParentId = parentId,
+                Transmit = false,
+                OutsideRth = req.OutsideRth
+            };
+            tpId = _client.Request.GetNextId();
+            _client.Request.PlaceOrder(tpId, tp, contract);
+        }
+
+        // Stop loss child
+        int slId = -1;
+        if (req.StopLossPrice.HasValue)
+        {
+            var sl = new Order()
+            {
+                Action = entryOrder.Action == OrderAction.Buy ? OrderAction.Sell : OrderAction.Buy,
+                TotalQuantity = req.Quantity,
+                OrderType = OrderTypes.Stop,
+                AuxPrice = req.StopLossPrice.Value,
+                ParentId = parentId,
+                Transmit = true, // transmit the whole bracket with the last child
+                OutsideRth = req.OutsideRth
+            };
+            slId = _client.Request.GetNextId();
+            _client.Request.PlaceOrder(slId, sl, contract);
+        }
+
+        _logger.LogInformation("Placed bracket order parent={Parent} tp={Tp} sl={Sl} for {Symbol}", parentId, tpId, slId, req.Symbol);
+        return new { success = true, parentOrderId = parentId, takeProfitOrderId = tpId, stopLossOrderId = slId };
+    }
+
+    public async Task<object> PlaceOcoOrdersAsync(InterReactBridge.Models.OcoOrderRequest req)
+    {
+        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        if (req.Orders == null || req.Orders.Count < 2) throw new ArgumentException("At least two orders required for OCO");
+
+        var contract = new Contract()
+        {
+            Symbol = req.Symbol,
+            SecurityType = req.SecType,
+            Exchange = req.Exchange,
+            Currency = "USD"
+        };
+
+        var group = string.IsNullOrWhiteSpace(req.OcaGroup) ? $"{req.Symbol}-OCO-{DateTime.UtcNow:yyyyMMddHHmmss}" : req.OcaGroup;
+        var ids = new List<int>();
+
+        foreach (var item in req.Orders)
+        {
+            var order = new Order()
+            {
+                Action = item.Action.ToUpper() == "BUY" ? OrderAction.Buy : OrderAction.Sell,
+                TotalQuantity = item.Quantity,
+                OrderType = (item.OrderType?.ToUpper()) switch
+                {
+                    "MKT" => OrderTypes.Market,
+                    "STP" => OrderTypes.Stop,
+                    _ => OrderTypes.Limit
+                },
+                LimitPrice = (item.OrderType?.ToUpper() == "LMT") ? (item.Price ?? 0) : 0,
+                AuxPrice = (item.OrderType?.ToUpper() == "STP") ? (item.StopPrice ?? 0) : 0,
+                OcaGroup = group,
+                OcaType = 1,
+                Transmit = true
+            };
+            var id = _client.Request.GetNextId();
+            _client.Request.PlaceOrder(id, order, contract);
+            ids.Add(id);
+        }
+
+        _logger.LogInformation("Placed OCO group {Group} with {Count} orders for {Symbol}", group, ids.Count, req.Symbol);
+        return new { success = true, ocaGroup = group, orderIds = ids };
+    }
+
+    public async Task<object> PlaceComboOrderAsync(InterReactBridge.Models.ComboOrderRequest req)
+    {
+        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        if (req.Legs == null || req.Legs.Count == 0) throw new ArgumentException("At least one combo leg required");
+
+        var bag = new Contract()
+        {
+            SecurityType = "BAG",
+            Exchange = req.Exchange,
+            Currency = req.Currency,
+            ComboLegs = req.Legs.Select(l => new ComboLeg
+            {
+                ConId = l.ConId,
+                Ratio = l.Ratio,
+                Action = l.Action.ToUpper() == "BUY" ? ComboAction.Buy : ComboAction.Sell,
+                Exchange = l.Exchange
+            }).ToList()
+        };
+
+        var order = new Order()
+        {
+            TotalQuantity = req.Quantity,
+            OrderType = (req.OrderType?.ToUpper()) switch
+            {
+                "MKT" => OrderTypes.Market,
+                _ => OrderTypes.Limit
+            },
+            LimitPrice = (req.OrderType?.ToUpper() == "LMT") ? (req.Price ?? 0) : 0,
+            Transmit = true
+        };
+
+        var id = _client.Request.GetNextId();
+        _client.Request.PlaceOrder(id, order, bag);
+        _logger.LogInformation("Placed combo order {Id} with {Legs} legs on {Exchange}", id, req.Legs.Count, req.Exchange);
+        return new { success = true, orderId = id };
+    }
 }

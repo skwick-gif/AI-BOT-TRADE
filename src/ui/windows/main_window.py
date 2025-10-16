@@ -19,6 +19,9 @@ from ui.widgets.watchlist_widget import WatchlistWidget
 from ui.widgets.scanner_widget import ScannerWidget
 from ui.dialogs.api_keys_dialog import APIKeysDialog
 from ui.dialogs.data_update_dialog import DataUpdateDialog
+from ui.dialogs.connection_wizard_dialog import ConnectionWizardDialog
+from ui.dialogs.bracket_order_dialog import BracketOrderDialog
+from ui.dialogs.oco_order_dialog import OcoOrderDialog
 from ui.themes.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
 from services.ibkr_adapter_service import IBKRAdapterService
@@ -111,6 +114,12 @@ class MainWindow(QMainWindow):
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.update_status)
         self.status_timer.start(self.config.ui.update_interval)
+
+        # Initial sync from bridge status so UI reflects existing connection immediately
+        try:
+            self.sync_from_bridge_status()
+        except Exception:
+            pass
         
     # Auto-connect disabled by user request
     
@@ -178,22 +187,66 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-    # Connection Menu
-    connection_menu = menubar.addMenu("Connection")
+        # Connection Menu
+        connection_menu = menubar.addMenu("Connection")
         
-    self.connect_action = QAction("Connect to IBKR", self)
-    self.connect_action.triggered.connect(self.toggle_ibkr_connection)
-    connection_menu.addAction(self.connect_action)
+        self.connect_action = QAction("Connect to IBKR", self)
+        self.connect_action.triggered.connect(self.toggle_ibkr_connection)
+        connection_menu.addAction(self.connect_action)
+
+        # Sync and Retry helpers
+        sync_status_action = QAction("Sync From Bridge Status", self)
+        sync_status_action.setStatusTip("If bridge is already connected, sync UI state")
+        sync_status_action.triggered.connect(self.sync_from_bridge_status)
+        connection_menu.addAction(sync_status_action)
+
+        retry_action = QAction("Retry Last Connect", self)
+        retry_action.setStatusTip("Ask the bridge to retry connection with the last endpoint")
+        retry_action.triggered.connect(self.retry_bridge_connect)
+        connection_menu.addAction(retry_action)
+
+        connection_menu.addSeparator()
+        # Diagnostics (Probe) to help diagnose connectivity quickly
+        diagnostics_action = QAction("IBKR Diagnostics (Probe)", self)
+        diagnostics_action.triggered.connect(self.run_ibkr_diagnostics)
+        connection_menu.addAction(diagnostics_action)
         
-    connection_menu.addSeparator()
-    # Diagnostics (Probe) to help diagnose connectivity quickly
-    diagnostics_action = QAction("IBKR Diagnostics (Probe)", self)
-    diagnostics_action.triggered.connect(self.run_ibkr_diagnostics)
-    connection_menu.addAction(diagnostics_action)
+        wizard_action = QAction("Connection Wizard…", self)
+        def _open_wizard():
+            try:
+                dlg = ConnectionWizardDialog(self, self.ibkr_service)
+                dlg.exec()
+                # After dialog closes, reflect current status
+                self.sync_from_bridge_status()
+            except Exception as e:
+                QMessageBox.warning(self, "Wizard Error", str(e))
+        wizard_action.triggered.connect(_open_wizard)
+        connection_menu.addAction(wizard_action)
         
-    api_keys_action = QAction("Configure API Keys", self)
-    api_keys_action.triggered.connect(self.show_api_keys_dialog)
-    connection_menu.addAction(api_keys_action)
+        api_keys_action = QAction("Configure API Keys", self)
+        api_keys_action.triggered.connect(self.show_api_keys_dialog)
+        connection_menu.addAction(api_keys_action)
+
+        # Quick test entry for advanced order (Bracket)
+        bracket_action = QAction("Place Bracket Order…", self)
+        def _open_bracket():
+            try:
+                dlg = BracketOrderDialog(self, self.ibkr_service)
+                dlg.exec()
+            except Exception as e:
+                QMessageBox.warning(self, "Bracket Order", str(e))
+        bracket_action.triggered.connect(_open_bracket)
+        connection_menu.addAction(bracket_action)
+
+        oco_action = QAction("Place OCO Orders…", self)
+        def _open_oco():
+            try:
+                dlg = OcoOrderDialog(self, self.ibkr_service)
+                dlg.exec()
+            except Exception as e:
+                QMessageBox.warning(self, "OCO Orders", str(e))
+        oco_action.triggered.connect(_open_oco)
+        connection_menu.addAction(oco_action)
         
         # View Menu
         view_menu = menubar.addMenu("View")
@@ -358,6 +411,15 @@ class MainWindow(QMainWindow):
         
         # Update time
         self.update_time()
+
+        # Periodic bridge status poll to reflect hints
+        try:
+            self._bridge_status_timer = QTimer(self)
+            self._bridge_status_timer.setInterval(5000)
+            self._bridge_status_timer.timeout.connect(self._poll_bridge_status)
+            self._bridge_status_timer.start()
+        except Exception:
+            pass
     
     def setup_connections(self):
         """Setup signal connections"""
@@ -399,6 +461,126 @@ class MainWindow(QMainWindow):
         self.config.ui.theme = new_theme
         self.apply_theme()
         self.logger.info(f"Theme changed to: {new_theme}")
+
+    def run_ibkr_diagnostics(self):
+        """Run quick diagnostics: show bridge /connect/status and /probe results in a dialog."""
+        try:
+            svc = self.ibkr_service or IBKRAdapterService(self.config.ibkr)
+            # Fetch status
+            status = {}
+            try:
+                status = svc.get_status()
+            except Exception:
+                status = {}
+            # Probe configured endpoint
+            host = getattr(self.config.ibkr, 'host', '127.0.0.1')
+            try:
+                port = int(getattr(self.config.ibkr, 'port', 4002) or 4002)
+            except Exception:
+                port = 4002
+            probe = {}
+            try:
+                probe = svc.probe(host, port, timeout_ms=800)
+            except Exception:
+                probe = {'reachable': False}
+
+            # Build message
+            lines = []
+            lines.append(f"Bridge URL: {svc.base_url}")
+            if isinstance(status, dict) and status:
+                connected = status.get('connected')
+                code = status.get('errorCode') or status.get('error_code')
+                err = status.get('errorMessage') or status.get('lastError') or status.get('error_message')
+                hint = status.get('hint')
+                s_host = status.get('host')
+                s_port = status.get('port')
+                lines.append(f"Status: connected={connected} endpoint={s_host}:{s_port}")
+                if code or err:
+                    lines.append("Error: " + (f"{code} " if code else "") + (err or "").strip())
+                if hint:
+                    lines.append(f"Hint: {hint}")
+            else:
+                lines.append("Status: unavailable (bridge not responding?)")
+
+            if isinstance(probe, dict) and probe:
+                reach = probe.get('reachable')
+                lat = probe.get('latencyMs') or probe.get('latency')
+                p_code = probe.get('errorCode')
+                p_msg = probe.get('errorMessage') or probe.get('error')
+                lines.append(f"Probe {host}:{port}: reachable={reach} latencyMs={lat}")
+                if p_code or p_msg:
+                    lines.append(f"Probe error: {(p_code or '')} {(p_msg or '')}".strip())
+
+            text = "\n".join([l for l in lines if l])
+            QMessageBox.information(self, "IBKR Diagnostics", text)
+        except Exception as e:
+            QMessageBox.warning(self, "Diagnostics Error", str(e))
+
+    def sync_from_bridge_status(self):
+        if not self.ibkr_service:
+            self.ibkr_service = IBKRAdapterService(self.config.ibkr)
+        try:
+            if self.ibkr_service.sync_connected_from_status():
+                # Wire into widgets when connected
+                if hasattr(self, 'dashboard_widget'):
+                    self.dashboard_widget.set_ibkr_service(self.ibkr_service)
+                if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
+                    self.ai_trading_widget.set_ibkr_status(True)
+                self.connection_status_changed.emit(True)
+                self.status_bar.showMessage("Synced connected state from bridge", 5000)
+            else:
+                # Surface hint
+                st = self.ibkr_service.get_status()
+                hint = st.get('hint') if isinstance(st, dict) else None
+                self.status_bar.showMessage(f"Bridge not connected{(' - '+hint) if hint else ''}", 7000)
+        except Exception as e:
+            QMessageBox.warning(self, "Sync Error", str(e))
+
+    def retry_bridge_connect(self):
+        if not self.ibkr_service:
+            self.ibkr_service = IBKRAdapterService(self.config.ibkr)
+        try:
+            if self.ibkr_service.retry_connect():
+                if hasattr(self, 'dashboard_widget'):
+                    self.dashboard_widget.set_ibkr_service(self.ibkr_service)
+                if hasattr(self, 'ai_trading_widget'):
+                    self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
+                    self.ai_trading_widget.set_ibkr_status(True)
+                self.connection_status_changed.emit(True)
+                self.status_bar.showMessage("Bridge connected after retry", 5000)
+            else:
+                st = self.ibkr_service.get_status()
+                code = st.get('errorCode') if isinstance(st, dict) else None
+                hint = st.get('hint') if isinstance(st, dict) else None
+                msg = "Retry failed"
+                if code or hint:
+                    msg += f" ({code or ''} {hint or ''})".strip()
+                self.status_bar.showMessage(msg, 7000)
+        except Exception as e:
+            QMessageBox.warning(self, "Retry Error", str(e))
+
+    def _poll_bridge_status(self):
+        try:
+            svc = self.ibkr_service or IBKRAdapterService(self.config.ibkr)
+            status = svc.get_status()
+            if isinstance(status, dict) and status.get('connected'):
+                # keep UI in sync if user connected via another process
+                if not (self.ibkr_service and self.ibkr_service.is_connected()):
+                    self.ibkr_service = svc
+                    if hasattr(self, 'dashboard_widget'):
+                        self.dashboard_widget.set_ibkr_service(self.ibkr_service)
+                    if hasattr(self, 'ai_trading_widget'):
+                        self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
+                        self.ai_trading_widget.set_ibkr_status(True)
+                    self.connection_status_changed.emit(True)
+            else:
+                # surface hint when disconnected
+                hint = status.get('hint') if isinstance(status, dict) else None
+                if hint:
+                    self.status_bar.showMessage(f"IBKR: {hint}", 5000)
+        except Exception:
+            pass
     
     def toggle_ibkr_connection(self):
         """Toggle IBKR connection"""
@@ -452,10 +634,11 @@ class MainWindow(QMainWindow):
                 self.ibkr_service = getattr(self._ibkr_worker, 'service', None)
                 # Wire services into widgets
                 if hasattr(self, 'dashboard_widget'):
-        # Diagnostics (Probe) to help diagnose connectivity quickly
-        diagnostics_action = QAction("IBKR Diagnostics (Probe)", self)
-        diagnostics_action.triggered.connect(self.run_ibkr_diagnostics)
-        connection_menu.addAction(diagnostics_action)
+                    # Ensure dashboard receives the connected service
+                    try:
+                        self.dashboard_widget.set_ibkr_service(self.ibkr_service)
+                    except Exception:
+                        pass
 
                 if hasattr(self, 'ai_trading_widget'):
                     self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
@@ -956,61 +1139,8 @@ class MainWindow(QMainWindow):
     def show_api_keys_dialog(self):
         """Show API keys configuration dialog"""
         try:
-        """Run quick diagnostics: show bridge /status and /probe results in a dialog."""
-        try:
-            svc = self.ibkr_service or IBKRAdapterService(self.config.ibkr)
-            # Fetch status
-            status = {}
-            try:
-                status = svc.get_status()
-            except Exception:
-                status = {}
-            # Probe configured endpoint
-            host = getattr(self.config.ibkr, 'host', '127.0.0.1')
-            try:
-                port = int(getattr(self.config.ibkr, 'port', 4002) or 4002)
-            except Exception:
-                port = 4002
-            probe = {}
-            try:
-                probe = svc.probe(host, port, timeout_ms=800)
-            except Exception:
-                probe = {'reachable': False}
-
-            # Build message
-            lines = []
-            lines.append(f"Bridge URL: {svc.base_url}")
-            if isinstance(status, dict) and status:
-                connected = status.get('connected')
-                code = status.get('errorCode') or status.get('error_code')
-                err = status.get('errorMessage') or status.get('lastError') or status.get('error_message')
-                hint = status.get('hint')
-                s_host = status.get('host')
-                s_port = status.get('port')
-                lines.append(f"Status: connected={connected} endpoint={s_host}:{s_port}")
-                if code or err:
-                    lines.append("Error: " + (f"{code} " if code else "") + (err or "").strip())
-                if hint:
-                    lines.append(f"Hint: {hint}")
-            else:
-                lines.append("Status: unavailable (bridge not responding?)")
-
-            if isinstance(probe, dict) and probe:
-                reach = probe.get('reachable')
-                lat = probe.get('latencyMs')
-                p_code = probe.get('errorCode')
-                p_msg = probe.get('errorMessage') or probe.get('error')
-                lines.append(f"Probe {host}:{port}: reachable={reach} latencyMs={lat}")
-                if p_code or p_msg:
-                    lines.append(f"Probe error: {(p_code or '')} {(p_msg or '')}".strip())
-
-            text = "\n".join([l for l in lines if l])
-            QMessageBox.information(self, "IBKR Diagnostics", text)
-        except Exception as e:
-            QMessageBox.warning(self, "Diagnostics Error", str(e))
             dialog = APIKeysDialog(self)
             result = dialog.exec()
-            
             if result == dialog.DialogCode.Accepted:
                 # Reload configuration after API keys are updated
                 self.config = ConfigManager()
@@ -1018,7 +1148,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(
                     self,
                     "Configuration Updated",
-                    "API keys have been updated successfully.\\n"
+                    "API keys have been updated successfully.\n"
                     "Some changes may require restarting the application."
                 )
         except Exception as e:
@@ -1026,7 +1156,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 "Configuration Error",
-                f"Failed to open API keys configuration:\\n{e}"
+                f"Failed to open API keys configuration:\n{e}"
             )
     
     def closeEvent(self, event):

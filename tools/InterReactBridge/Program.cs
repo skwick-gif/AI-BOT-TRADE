@@ -2,6 +2,15 @@ using InterReactBridge.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Builder;
+using InterReactBridge.Models;
+
+// Single-instance guard
+using var singleInstance = new System.Threading.Mutex(initiallyOwned: true, name: "Global/InterReactBridge_SingleInstance", out bool acquired);
+if (!acquired)
+{
+    Console.Error.WriteLine("Another instance of InterReactBridge is already running. Exiting.");
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -142,6 +151,52 @@ app.MapPost("/order", async (IbService ib, string symbol, string secType, string
     {
         var result = await ib.PlaceOrderAsync(symbol, secType, exchange, action, quantity, price, orderType ?? "LMT");
         return Results.Ok(new { success = true, result });
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+});
+
+// -----------------------------
+// Advanced Orders: Bracket / OCO / Combo
+// -----------------------------
+
+// Bracket: parent (entry) + take profit + stop loss
+app.MapPost("/orders/bracket", async (IbService ib, BracketOrderRequest req) =>
+{
+    try
+    {
+        var result = await ib.PlaceBracketOrderAsync(req);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+});
+
+// OCO: One-Cancels-the-Other group
+app.MapPost("/orders/oco", async (IbService ib, OcoOrderRequest req) =>
+{
+    try
+    {
+        var result = await ib.PlaceOcoOrdersAsync(req);
+        return Results.Ok(result);
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { success = false, message = ex.Message });
+    }
+});
+
+// Combo (BAG) order: requires conIds for legs
+app.MapPost("/orders/combo", async (IbService ib, ComboOrderRequest req) =>
+{
+    try
+    {
+        var result = await ib.PlaceComboOrderAsync(req);
+        return Results.Ok(result);
     }
     catch (Exception ex)
     {

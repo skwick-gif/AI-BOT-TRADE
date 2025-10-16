@@ -179,6 +179,64 @@ class IBKRAdapterService:
             self.logger.debug(f"Failed to get status: {e}")
             return {}
 
+    def sync_connected_from_status(self) -> bool:
+        """Sync internal connected flag from bridge status if already connected."""
+        try:
+            status = self.get_status()
+            if isinstance(status, dict) and status.get('connected'):
+                if not self._connected:
+                    self.logger.info("Syncing connected state from bridge status (already connected)")
+                self._connected = True
+                # Optionally adopt endpoint/clientId if provided
+                try:
+                    host = status.get('host') or getattr(self.config, 'host', None)
+                    port = status.get('port') or getattr(self.config, 'port', None)
+                    client_id = status.get('clientId') or getattr(self.config, 'client_id', None)
+                    if host:
+                        self.config.host = host  # type: ignore[attr-defined]
+                    if port:
+                        self.config.port = int(port)  # type: ignore[attr-defined]
+                    if client_id:
+                        self.config.client_id = int(client_id)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                return True
+            return False
+        except Exception as e:
+            self.logger.debug(f"Status sync failed: {e}")
+            return False
+
+    def retry_connect(self) -> bool:
+        """Ask bridge to retry last endpoint (/connect/retry)."""
+        try:
+            r = requests.post(f"{self.base_url}/connect/retry", timeout=20)
+            r.raise_for_status()
+            js = r.json() if r.content else {}
+            if isinstance(js, dict) and js.get('connected'):
+                self._connected = True
+                # Update current config if endpoint returned
+                try:
+                    if 'port' in js:
+                        self.config.port = int(js['port'])  # type: ignore[attr-defined]
+                    if 'clientId' in js:
+                        self.config.client_id = int(js['clientId'])  # type: ignore[attr-defined]
+                    if 'host' in js:
+                        self.config.host = js['host']  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                self.logger.info("Bridge retry reported connected=true")
+                return True
+            # On failure, capture message if any
+            try:
+                self.last_error = js.get('message') if isinstance(js, dict) else None
+            except Exception:
+                pass
+            return False
+        except Exception as e:
+            self.last_error = str(e)
+            self.logger.error(f"Retry connect failed: {e}")
+            return False
+
     def probe(self, host: Optional[str] = None, port: Optional[int] = None, timeout_ms: int = 800) -> Dict[str, Any]:
         """Probe TCP reachability via bridge (/probe)."""
         h = host or getattr(self.config, 'host', '127.0.0.1')
@@ -407,3 +465,107 @@ class IBKRAdapterService:
         except Exception as e:
             self.logger.error(f"Failed to scan market: {e}")
             return []
+
+    # -----------------------------
+    # Advanced orders
+    # -----------------------------
+
+    def place_bracket_order(
+        self,
+        symbol: str,
+        quantity: int,
+        action: str = "BUY",
+        entry_type: str = "MKT",
+        entry_price: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        stop_loss: Optional[float] = None,
+        sec_type: str = "STK",
+        exchange: str = "SMART",
+        outside_rth: bool = False,
+    ) -> Dict[str, Any]:
+        """Place a bracket order via /orders/bracket."""
+        if not self.is_connected():
+            return {"success": False, "message": "Not connected"}
+        try:
+            payload = {
+                "Symbol": symbol,
+                "SecType": sec_type,
+                "Exchange": exchange,
+                "Action": action,
+                "Quantity": quantity,
+                "EntryType": entry_type,
+                "EntryPrice": entry_price,
+                "TakeProfitPrice": take_profit,
+                "StopLossPrice": stop_loss,
+                "OutsideRth": outside_rth,
+            }
+            # Lowercase keys to match C# model binder default (case-insensitive, but keep tidy)
+            payload = { k[0].lower()+k[1:]: v for k, v in payload.items() }
+            r = requests.post(f"{self.base_url}/orders/bracket", json=payload, timeout=20)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            self.logger.error(f"Bracket order failed: {e}")
+            return {"success": False, "message": str(e)}
+
+    def place_oco_orders(
+        self,
+        symbol: str,
+        orders: List[Dict[str, Any]],
+        sec_type: str = "STK",
+        exchange: str = "SMART",
+        oca_group: Optional[str] = None,
+        outside_rth: bool = False,
+    ) -> Dict[str, Any]:
+        """Place an OCO group via /orders/oco.
+        Orders items: { action: BUY/SELL, orderType: LMT/MKT/STP, quantity, price?, stopPrice? }
+        """
+        if not self.is_connected():
+            return {"success": False, "message": "Not connected"}
+        try:
+            payload = {
+                "Symbol": symbol,
+                "SecType": sec_type,
+                "Exchange": exchange,
+                "OcaGroup": oca_group or "",
+                "OutsideRth": outside_rth,
+                "Orders": orders,
+            }
+            payload = { k[0].lower()+k[1:]: v for k, v in payload.items() }
+            r = requests.post(f"{self.base_url}/orders/oco", json=payload, timeout=20)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            self.logger.error(f"OCO order failed: {e}")
+            return {"success": False, "message": str(e)}
+
+    def place_combo_order(
+        self,
+        legs: List[Dict[str, Any]],
+        exchange: str = "SMART",
+        currency: str = "USD",
+        order_type: str = "LMT",
+        price: Optional[float] = None,
+        quantity: int = 1,
+        outside_rth: bool = False,
+    ) -> Dict[str, Any]:
+        """Place a combo (BAG) order via /orders/combo. Legs require conId, ratio, action, exchange."""
+        if not self.is_connected():
+            return {"success": False, "message": "Not connected"}
+        try:
+            payload = {
+                "Exchange": exchange,
+                "Currency": currency,
+                "Legs": legs,
+                "OrderType": order_type,
+                "Price": price,
+                "Quantity": quantity,
+                "OutsideRth": outside_rth,
+            }
+            payload = { k[0].lower()+k[1:]: v for k, v in payload.items() }
+            r = requests.post(f"{self.base_url}/orders/combo", json=payload, timeout=20)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            self.logger.error(f"Combo order failed: {e}")
+            return {"success": False, "message": str(e)}
