@@ -4,6 +4,7 @@ using System.Reactive.Linq;
 using System.Reactive.Threading.Tasks;
 using System.Text.Json;
 using System.IO;
+using InterReactBridge.Models;
 
 namespace InterReactBridge.Services;
 
@@ -215,6 +216,82 @@ public class IbService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting market data");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Get delayed market prices for calculating indicators
+    /// IBKR provides delayed data (15-20 minutes delay for free accounts)
+    /// We'll collect price ticks over time to build a price series
+    /// </summary>
+    /// <param name="symbol">Stock symbol (e.g., "AAPL")</param>
+    /// <param name="secType">Security type (e.g., "STK" for stock)</param>
+    /// <param name="exchange">Exchange (e.g., "SMART")</param>
+    /// <param name="sampleSeconds">How many seconds to collect ticks (default 30)</param>
+    /// <returns>List of price points sampled over time</returns>
+    public async Task<PriceSeriesResponse> GetDelayedPriceSeries(
+        string symbol, 
+        string secType, 
+        string exchange, 
+        int sampleSeconds = 30)
+    {
+        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+
+        try
+        {
+            _logger.LogInformation("Requesting delayed price series: {Symbol}, Duration={Duration}s", 
+                symbol, sampleSeconds);
+
+            var contract = new Contract()
+            {
+                Symbol = symbol,
+                SecurityType = secType,
+                Exchange = exchange,
+                Currency = "USD"
+            };
+
+            var prices = new List<PricePoint>();
+            var lastPrice = 0.0;
+
+            var sub = _client.Service
+                .CreateMarketDataObservable(contract)
+                .OfTickClass(selector => selector.PriceTick)
+                .Subscribe(pt =>
+                {
+                    // Collect price ticks
+                    if (pt.Price > 0 && pt.Price != lastPrice)
+                    {
+                        lastPrice = pt.Price;
+                        prices.Add(new PricePoint
+                        {
+                            Price = pt.Price,
+                            TickType = pt.TickType.ToString(),
+                            Time = DateTime.UtcNow
+                        });
+                        _logger.LogDebug("Price tick: {Price} at {Time}", pt.Price, DateTime.UtcNow);
+                    }
+                });
+
+            // Collect ticks for the specified duration
+            await Task.Delay(TimeSpan.FromSeconds(sampleSeconds));
+
+            sub.Dispose();
+
+            _logger.LogInformation("Collected {Count} price points for {Symbol}", prices.Count, symbol);
+
+            return new PriceSeriesResponse
+            {
+                Symbol = symbol,
+                SampleSeconds = sampleSeconds,
+                PricesCount = prices.Count,
+                Prices = prices,
+                Note = "Delayed market data from IBKR (15-20 minutes delay for free accounts). Limited to ticks received during sample period."
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting delayed price series for {Symbol}", symbol);
             throw;
         }
     }

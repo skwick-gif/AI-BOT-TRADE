@@ -1,5 +1,6 @@
 using InterReactBridge.Services;
 using InterReactBridge.Hubs;
+using InterReactBridge.Services.Indicators;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,6 +42,119 @@ app.MapGet("/", () => "InterReactBridge is running");
 app.MapGet("/health", () =>
 {
     return Results.Ok(new { status = "ok" });
+});
+
+// -----------------------------
+// Test SMA Indicator
+// Example: GET /test/sma
+// -----------------------------
+app.MapGet("/test/sma", () =>
+{
+    try
+    {
+        var sma3 = new SimpleMovingAverage(3);
+        var results = new List<object>();
+
+        var prices = new[] { 10m, 20m, 30m, 40m, 50m };
+        foreach (var price in prices)
+        {
+            sma3.AddPrice(price, DateTime.Now);
+            var value = sma3.Calculate();
+            results.Add(new
+            {
+                Price = price,
+                IsReady = sma3.IsReady,
+                Count = sma3.Count,
+                SMA = value
+            });
+        }
+
+        return Results.Ok(new
+        {
+            indicator = sma3.Name,
+            period = 3,
+            results,
+            note = "Expected: 20.00, 30.00, 40.00 for last 3 values"
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// -----------------------------
+// Delayed Price Series
+// Example: GET /delayed-prices?symbol=AAPL&secType=STK&exchange=SMART&sampleSeconds=30
+// -----------------------------
+app.MapGet("/delayed-prices", async (IbService ib, string symbol, string secType, string exchange, 
+    int sampleSeconds = 30) =>
+{
+    try
+    {
+        var prices = await ib.GetDelayedPriceSeries(symbol, secType, exchange, sampleSeconds);
+        return Results.Ok(prices);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// -----------------------------
+// SMA on Delayed Market Data
+// Example: GET /indicators/sma?symbol=AAPL&period=5&sampleSeconds=30
+// -----------------------------
+app.MapGet("/indicators/sma", async (IbService ib, string symbol, int period = 5, 
+    string secType = "STK", string exchange = "SMART", int sampleSeconds = 30) =>
+{
+    try
+    {
+        // Get delayed price series from IBKR
+        var priceData = await ib.GetDelayedPriceSeries(symbol, secType, exchange, sampleSeconds);
+        
+        if (priceData.Prices == null || priceData.Prices.Count == 0)
+        {
+            return Results.BadRequest(new { error = "No price data received" });
+        }
+
+        // Create SMA indicator
+        var sma = new SimpleMovingAverage(period);
+        var results = new List<object>();
+
+        // Process each price point
+        foreach (var pricePoint in priceData.Prices)
+        {
+            var price = Convert.ToDecimal(pricePoint.Price);
+            var time = pricePoint.Time;
+
+            sma.AddPrice(price, time);
+            var smaValue = sma.Calculate();
+
+            results.Add(new
+            {
+                Time = time,
+                Price = price,
+                SMA = smaValue,
+                IsReady = sma.IsReady
+            });
+        }
+
+        return Results.Ok(new
+        {
+            Symbol = symbol,
+            Indicator = sma.Name,
+            Period = period,
+            SampleSeconds = sampleSeconds,
+            PricesCount = priceData.Prices.Count,
+            Results = results,
+            Note = priceData.Note
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message, stack = ex.StackTrace });
+    }
 });
 
 // -----------------------------
