@@ -74,4 +74,9 @@ def get_portfolio():
         return jsonify({"error": str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(host='localhost', port=8080, debug=False)
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except Exception as e:
+        print(f"Error starting Flask: {e}")
+        import traceback
+        traceback.print_exc()

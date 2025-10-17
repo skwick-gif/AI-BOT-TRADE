@@ -12,6 +12,11 @@ builder.WebHost.UseUrls("http://localhost:5080");
 var app = builder.Build();
 
 // -----------------------------
+// Root
+// -----------------------------
+app.MapGet("/", () => "InterReactBridge is running");
+
+// -----------------------------
 // Health check
 // -----------------------------
 app.MapGet("/health", () =>
@@ -85,4 +90,13 @@ app.MapGet("/portfolio", async (IbService ib) =>
 // -----------------------------
 // Start the server
 // -----------------------------
-app.Run();
+Console.WriteLine("Starting InterReactBridge...");
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Application failed to start: {ex.Message}");
+    Console.WriteLine(ex.StackTrace);
+}

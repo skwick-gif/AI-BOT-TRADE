@@ -612,11 +612,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "d:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\InterReactBridge.csproj",
+      "projectUniqueName": "D:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\InterReactBridge.csproj",
       "projectName": "InterReactBridge",
-      "projectPath": "d:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\InterReactBridge.csproj",
+      "projectPath": "D:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\InterReactBridge.csproj",
       "packagesPath": "C:\\Users\\PC\\.nuget\\packages\\",
-      "outputPath": "d:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\obj\\",
+      "outputPath": "D:\\Projects\\AI-BOT-TRADE\\tools\\InterReactBridge\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\PC\\AppData\\Roaming\\NuGet\\NuGet.Config",

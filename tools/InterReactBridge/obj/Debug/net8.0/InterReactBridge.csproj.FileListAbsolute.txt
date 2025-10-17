@@ -84,3 +84,44 @@ D:\AI BOT TRADE\tools\InterReactBridge\obj\Debug\net8.0\refint\InterReactBridge.
 D:\AI BOT TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.pdb
 D:\AI BOT TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.genruntimeconfig.cache
 D:\AI BOT TRADE\tools\InterReactBridge\obj\Debug\net8.0\ref\InterReactBridge.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\interreact_status.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.staticwebassets.endpoints.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.exe
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.deps.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.runtimeconfig.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.pdb
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReact.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Bcl.AsyncInterfaces.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.DependencyInjection.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.Logging.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.Logging.Abstractions.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.Options.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\NodaTime.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\RxSockets.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Stringification.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\System.Linq.Async.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\System.Reactive.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.csproj.AssemblyReference.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\rpswa.dswa.cache.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.GeneratedMSBuildEditorConfig.editorconfig
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.AssemblyInfoInputs.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.AssemblyInfo.cs
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.csproj.CoreCompileInputs.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.MvcApplicationPartsAssemblyInfo.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.sourcelink.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\rjimswa.dswa.cache.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\rjsmrazor.dswa.cache.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\rjsmcshtml.dswa.cache.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\scopedcss\bundle\InterReactBridge.styles.css
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\staticwebassets.build.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\staticwebassets.build.json.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\staticwebassets.development.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\staticwebassets.build.endpoints.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterRea.A5DB13EE.Up2Date
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\refint\InterReactBridge.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.pdb
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.genruntimeconfig.cache
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\ref\InterReactBridge.dll

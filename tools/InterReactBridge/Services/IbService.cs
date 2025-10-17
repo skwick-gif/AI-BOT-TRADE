@@ -22,33 +22,52 @@ public class IbService
     {
         try
         {
+            _logger.LogInformation("=== Starting IBKR connection attempt ===");
+            _logger.LogInformation("Host: {Host}, Port: {Port}, ClientId: {ClientId}", host, port, clientId);
+            
+            _logger.LogInformation("Creating InterReactClient...");
             _client = await InterReactClient.ConnectAsync(options =>
             {
                 options.TwsIpAddress = System.Net.IPAddress.Parse(host);
                 options.IBPortAddresses = new[] { port };
                 options.TwsClientId = clientId;
+                _logger.LogInformation("Options set: IP={IP}, Port={Port}, ClientId={ClientId}", 
+                    options.TwsIpAddress, port, clientId);
             });
+            
+            _logger.LogInformation("InterReactClient created successfully");
+
+            _logger.LogInformation("InterReactClient created successfully");
 
             // Try to get managed accounts with timeout
             try
             {
+                _logger.LogInformation("Waiting for ManagedAccounts response...");
                 var cts = new CancellationTokenSource(5000);
                 var managedAccounts = await _client.Response.OfType<ManagedAccounts>().FirstAsync().ToTask(cts.Token);
                 _accountCode = managedAccounts.Accounts.Split(',')[0];
                 _logger.LogInformation("Connected to IBKR at {Host}:{Port}, Account: {Account}", host, port, _accountCode);
             }
-            catch
+            catch (Exception accountEx)
             {
                 _accountCode = null;
+                _logger.LogWarning(accountEx, "Could not retrieve account code within timeout");
                 _logger.LogInformation("Connected to IBKR at {Host}:{Port}, no account code received", host, port);
             }
 
             await WriteConnectionStatusAsync(new { connected = true, host, port, clientId, account = _accountCode, time = DateTime.UtcNow });
+            _logger.LogInformation("=== Connection successful ===");
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to connect to IBKR");
+            _logger.LogError(ex, "=== Failed to connect to IBKR ===");
+            _logger.LogError("Error Type: {Type}", ex.GetType().Name);
+            _logger.LogError("Error Message: {Message}", ex.Message);
+            if (ex.InnerException != null)
+            {
+                _logger.LogError("Inner Exception: {InnerMessage}", ex.InnerException.Message);
+            }
             await WriteConnectionStatusAsync(new { connected = false, host, port, clientId, error = ex.Message, time = DateTime.UtcNow });
             return false;
         }
@@ -78,12 +97,12 @@ public class IbService
             _client.Request.RequestAccountSummary(requestId, "All");
 
             // Wait for summaries
-            await Task.Delay(10000);
+            await Task.Delay(5000);
 
             sub.Dispose();
 
-            // Cancel account summary request
-            _client.Request.CancelAccountSummary(requestId);
+            // Note: Not canceling subscription to avoid connection issues
+            // TWS will stop sending when we unsubscribe
 
             _logger.LogInformation("Received {Count} account summary items", summaries.Count);
             // persist a small audit file with count
@@ -127,12 +146,12 @@ public class IbService
             _client.Request.RequestPositions();
 
             // Wait for positions
-            await Task.Delay(10000);
+            await Task.Delay(5000);
 
             sub.Dispose();
 
-            // Cancel positions request
-            _client.Request.CancelPositions();
+            // Note: Not canceling subscription to avoid connection issues
+            // TWS will stop sending when we unsubscribe
 
             _logger.LogInformation("Received {Count} portfolio positions", positions.Count);
             // persist a small audit file with count
