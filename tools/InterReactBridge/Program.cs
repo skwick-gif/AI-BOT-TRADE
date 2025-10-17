@@ -1,10 +1,29 @@
 using InterReactBridge.Services;
+using InterReactBridge.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // הזרקת תלות
 builder.Services.AddLogging();
 builder.Services.AddSingleton<IbService>();
+
+// Background Service - The heart of production!
+// Maintains persistent connection to TWS and broadcasts real-time updates
+builder.Services.AddHostedService<TwsConnectionService>();
+
+// SignalR for real-time streaming
+builder.Services.AddSignalR();
+
+// CORS policy for web clients
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
 
 // קבע את ה-port ל-5080
 builder.WebHost.UseUrls("http://localhost:5080");
@@ -88,9 +107,21 @@ app.MapGet("/portfolio", async (IbService ib) =>
 });
 
 // -----------------------------
+// SignalR Hubs for real-time streaming
+// -----------------------------
+app.UseCors("AllowAll");
+app.MapHub<AccountHub>("/hubs/account");
+app.MapHub<PortfolioHub>("/hubs/portfolio");
+app.MapHub<MarketDataHub>("/hubs/marketdata");
+
+// -----------------------------
 // Start the server
 // -----------------------------
 Console.WriteLine("Starting InterReactBridge...");
+Console.WriteLine("SignalR Hubs:");
+Console.WriteLine("  - /hubs/account");
+Console.WriteLine("  - /hubs/portfolio");
+Console.WriteLine("  - /hubs/marketdata");
 try
 {
     app.Run();

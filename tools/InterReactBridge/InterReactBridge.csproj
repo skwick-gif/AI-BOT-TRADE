@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="InterReact" Version="0.6.0" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.0" />
   </ItemGroup>
 
 </Project>

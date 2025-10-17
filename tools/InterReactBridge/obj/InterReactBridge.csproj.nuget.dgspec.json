@@ -49,6 +49,10 @@
             "InterReact": {
               "target": "Package",
               "version": "[0.6.0, )"
+            },
+            "Microsoft.AspNetCore.SignalR": {
+              "target": "Package",
+              "version": "[1.2.0, )"
             }
           },
           "imports": [

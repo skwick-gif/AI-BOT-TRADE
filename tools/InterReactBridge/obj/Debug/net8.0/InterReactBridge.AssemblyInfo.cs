@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("InterReactBridge")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+d310b54523a5f511fd4df7b7efd800a4bfe15d47")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+62206b589be8249dbaf31302b589b9bf836e672e")]
 [assembly: System.Reflection.AssemblyProductAttribute("InterReactBridge")]
 [assembly: System.Reflection.AssemblyTitleAttribute("InterReactBridge")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

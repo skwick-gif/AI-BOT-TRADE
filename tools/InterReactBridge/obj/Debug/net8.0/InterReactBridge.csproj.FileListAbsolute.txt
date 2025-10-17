@@ -125,3 +125,10 @@ D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\refint\InterRea
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.pdb
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.genruntimeconfig.cache
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\ref\InterReactBridge.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.Diagnostics.Abstractions.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.Hosting.Abstractions.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Microsoft.Extensions.ObjectPool.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\Newtonsoft.Json.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\System.Net.WebSockets.WebSocketProtocol.dll
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\appsettings.Development.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\appsettings.json
