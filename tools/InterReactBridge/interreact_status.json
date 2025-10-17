@@ -1,11 +1,4 @@
 {
-  "connected": false,
-  "errorCode": "CONNECT_TIMEOUT",
-  "errorMessage": "connect timeout (20s)",
-  "hint": "Likely API disabled or untrusted IP. In TWS/IB Gateway: enable \u0027Enable ActiveX and Socket Clients\u0027 and add 127.0.0.1 to Trusted IPs.",
-  "account": null,
-  "lastAttemptUtc": "2025-10-16T06:34:56.6842629Z",
-  "host": "127.0.0.1",
-  "port": 4002,
-  "clientId": 101
+  "accountSummaryCount": 78,
+  "time": "2025-10-17T12:13:31.2509765Z"
 }
