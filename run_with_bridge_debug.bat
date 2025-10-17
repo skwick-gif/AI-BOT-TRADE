@@ -1,23 +1,23 @@
-@echo on
-setlocal EnableDelayedExpansion
-echo ========================================
-echo   DEBUG: Start InterReactBridge + PyQt App
-echo ========================================
+@echo off
+REM ============================================================================
+REM DEPRECATED: This debug script is no longer used.
+REM
+REM Please use the new separate scripts instead:
+REM   1. start_bridge.bat  (Terminal 1 - runs the .NET Bridge with full logging)
+REM   2. run_app.bat       (Terminal 2 - runs the Python UI)
+REM
+REM The bridge now displays logs directly in its terminal window.
+REM See README.md for detailed instructions.
+REM ============================================================================
+echo.
+echo *** DEPRECATED DEBUG SCRIPT ***
+echo This debug script is no longer used. Please run:
+echo   - start_bridge.bat (Terminal 1 - shows all logs)
+echo   - run_app.bat      (Terminal 2)
+echo.
+pause
+exit /b 1
 
-setlocal
-if not exist logs mkdir logs
-
-REM Control whether to open a live log tail window for the bridge (1=on, 0=off)
-if "%BRIDGE_TAIL%"=="" set BRIDGE_TAIL=1
-
-REM Configure IB (Paper defaults)
-if "%IBKR_HOST%"=="" set IBKR_HOST=127.0.0.1
-if "%IBKR_PORT%"=="" set IBKR_PORT=4002
-if "%IBKR_CLIENT_ID%"=="" set IBKR_CLIENT_ID=1
-set IBKR_AUTO_CONNECT=1
-
-REM Detect existing bridge on 8080
-for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "try { (Invoke-RestMethod -TimeoutSec 2 http://localhost:8080/health) | ConvertTo-Json -Compress } catch { '' }"`) do set HEALTH8080=%%A
 if not "%HEALTH8080%"=="" (
   echo Detected existing InterReactBridge on http://localhost:8080
   set IBKR_BRIDGE_URL=http://localhost:8080

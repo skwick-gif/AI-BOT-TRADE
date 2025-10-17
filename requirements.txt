@@ -48,12 +48,5 @@ matplotlib==3.9.2
 plotly==5.23.0
 pyqtgraph==0.13.7
 
-# Streamlit (for dashboards)
-streamlit
-
 # Additional utilities
 aiohttp
-
-# Development and testing
-pytest==8.3.2
-pytest-qt==4.4.0

@@ -1,13 +1,22 @@
 @echo off
-setlocal EnableDelayedExpansion
-echo ========================================
-echo   Start InterReactBridge + PyQt App
-echo ========================================
+REM ============================================================================
+REM DEPRECATED: This script is no longer used.
+REM
+REM Please use the new separate scripts instead:
+REM   1. start_bridge.bat  (Terminal 1 - runs the .NET Bridge)
+REM   2. run_app.bat       (Terminal 2 - runs the Python UI)
+REM
+REM See README.md for detailed instructions.
+REM ============================================================================
+echo.
+echo *** DEPRECATED SCRIPT ***
+echo This script is no longer used. Please run:
+echo   - start_bridge.bat (Terminal 1)
+echo   - run_app.bat      (Terminal 2)
+echo.
+pause
+exit /b 1
 
-setlocal
-set IBKR_HOST=127.0.0.1
-set IBKR_PORT=4002
-set IBKR_CLIENT_ID=1
 
 REM If IBKR_BRIDGE_URL already provided, use it as-is
 if not "%IBKR_BRIDGE_URL%"=="" goto HAS_URL
