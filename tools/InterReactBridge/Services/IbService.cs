@@ -112,13 +112,28 @@ public class IbService
             // persist a small audit file with count
             await WriteConnectionStatusAsync(new { accountSummaryCount = summaries.Count, time = DateTime.UtcNow });
 
-            return summaries.Select(x => new 
-            { 
-                Tag = string.IsNullOrEmpty(x.Tag) ? "Unknown" : x.Tag,
-                Value = string.IsNullOrEmpty(x.Value) ? "N/A" : x.Value,
-                Account = string.IsNullOrEmpty(x.Account) ? "Unknown" : x.Account,
-                Currency = string.IsNullOrEmpty(x.Currency) ? "USD" : x.Currency
-            }).ToList();
+            // Convert to dictionary grouped by Tag for UI compatibility
+            // UI expects: { "NetLiquidation": { value: "123", currency: "USD", account: "U123" } }
+            var dictionary = new Dictionary<string, object>();
+            foreach (var item in summaries)
+            {
+                var tag = string.IsNullOrEmpty(item.Tag) ? "Unknown" : item.Tag;
+                
+                // If tag already exists (multiple accounts), keep the first one
+                // TODO: In future, support multiple accounts by returning array per tag
+                if (!dictionary.ContainsKey(tag))
+                {
+                    dictionary[tag] = new
+                    {
+                        value = string.IsNullOrEmpty(item.Value) ? "0" : item.Value,
+                        currency = string.IsNullOrEmpty(item.Currency) ? "USD" : item.Currency,
+                        account = string.IsNullOrEmpty(item.Account) ? "Unknown" : item.Account
+                    };
+                }
+            }
+            
+            _logger.LogInformation("Converted to dictionary with {Count} unique tags", dictionary.Count);
+            return dictionary;
         }
         catch (Exception ex)
         {
@@ -162,16 +177,20 @@ public class IbService
             // persist a small audit file with count
             await WriteConnectionStatusAsync(new { portfolioCount = positions.Count, time = DateTime.UtcNow });
 
+            // Normalize field names to snake_case for Python UI compatibility
+            // UI expects: { symbol, position, average_cost, market_price, market_value, unrealized_pnl }
             return positions.Select(p => new
             {
-                Account = string.IsNullOrEmpty(p.Account) ? "Unknown" : p.Account,
-                Symbol = string.IsNullOrEmpty(p.Contract.Symbol) ? "Unknown" : p.Contract.Symbol,
-                SecurityType = string.IsNullOrEmpty(p.Contract.SecurityType) ? "Unknown" : p.Contract.SecurityType,
-                Exchange = string.IsNullOrEmpty(p.Contract.Exchange) ? "Unknown" : p.Contract.Exchange,
-                Currency = string.IsNullOrEmpty(p.Contract.Currency) ? "USD" : p.Contract.Currency,
-                Position = p.Position,
-                AverageCost = p.AverageCost,
-                MarketValue = p.Position * (decimal)p.AverageCost
+                account = string.IsNullOrEmpty(p.Account) ? "Unknown" : p.Account,
+                symbol = string.IsNullOrEmpty(p.Contract.Symbol) ? "Unknown" : p.Contract.Symbol,
+                security_type = string.IsNullOrEmpty(p.Contract.SecurityType) ? "Unknown" : p.Contract.SecurityType,
+                exchange = string.IsNullOrEmpty(p.Contract.Exchange) ? "Unknown" : p.Contract.Exchange,
+                currency = string.IsNullOrEmpty(p.Contract.Currency) ? "USD" : p.Contract.Currency,
+                position = p.Position,
+                average_cost = p.AverageCost,
+                market_price = p.AverageCost,  // TODO: Fetch real-time market price from TWS
+                market_value = p.Position * (decimal)p.AverageCost,
+                unrealized_pnl = 0.0  // TODO: Calculate from (market_price - average_cost) * position
             }).ToList();
         }
         catch (Exception ex)

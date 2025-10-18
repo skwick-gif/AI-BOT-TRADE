@@ -1,5 +1,6 @@
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\appsettings.Development.json
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\appsettings.json
+D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\interreact_status.json
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.staticwebassets.endpoints.json
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.exe
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\InterReactBridge.deps.json
@@ -45,4 +46,3 @@ D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\refint\InterRea
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.pdb
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\InterReactBridge.genruntimeconfig.cache
 D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\obj\Debug\net8.0\ref\InterReactBridge.dll
-D:\Projects\AI-BOT-TRADE\tools\InterReactBridge\bin\Debug\net8.0\interreact_status.json
