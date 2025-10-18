@@ -1,4 +1,8 @@
 {
-  "portfolioCount": 11,
-  "time": "2025-10-17T16:42:03.9907977Z"
+  "connected": true,
+  "host": "127.0.0.1",
+  "port": 7497,
+  "clientId": 101,
+  "account": "U19784075",
+  "time": "2025-10-18T16:31:51.0012905Z"
 }

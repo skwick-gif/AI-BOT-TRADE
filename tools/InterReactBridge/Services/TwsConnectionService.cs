@@ -364,6 +364,14 @@ public class TwsConnectionService : BackgroundService
         return _accountCode;
     }
 
+    public IInterReactClient? GetClient()
+    {
+        lock (_lockObject)
+        {
+            return _isConnected ? _client : null;
+        }
+    }
+
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("TwsConnectionService stop requested");

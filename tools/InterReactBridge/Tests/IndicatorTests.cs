@@ -62,6 +62,8 @@ public class IndicatorTests
         Console.WriteLine("=== All Tests Complete ===");
     }
 
+    // Main method temporarily disabled to prevent conflicts with Program.cs
+    /*
     public static void Main(string[] args)
     {
         try
@@ -77,4 +79,5 @@ public class IndicatorTests
         Console.WriteLine("\nPress any key to exit...");
         Console.ReadKey();
     }
+    */
 }

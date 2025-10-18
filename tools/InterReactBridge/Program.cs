@@ -6,11 +6,14 @@ var builder = WebApplication.CreateBuilder(args);
 
 // הזרקת תלות
 builder.Services.AddLogging();
+
+// TwsConnectionService - רשום כ-Singleton וגם כ-HostedService
+builder.Services.AddSingleton<TwsConnectionService>();
 builder.Services.AddSingleton<IbService>();
 
 // Background Service - The heart of production!
 // Maintains persistent connection to TWS and broadcasts real-time updates
-builder.Services.AddHostedService<TwsConnectionService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<TwsConnectionService>());
 
 // SignalR for real-time streaming
 builder.Services.AddSignalR();
@@ -42,6 +45,33 @@ app.MapGet("/", () => "InterReactBridge is running");
 app.MapGet("/health", () =>
 {
     return Results.Ok(new { status = "ok" });
+});
+
+// -----------------------------
+// Connection Status
+// -----------------------------
+app.MapGet("/connection-status", (TwsConnectionService twsService) =>
+{
+    try
+    {
+        var isConnected = twsService.IsConnected();
+        var status = new
+        {
+            isConnected = isConnected,
+            accountCode = twsService.GetAccountCode(),
+            host = "127.0.0.1", // From configuration
+            port = 7497,
+            message = isConnected ? "Connected to TWS" : "Not connected to TWS"
+        };
+        return Results.Ok(status);
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new { 
+            isConnected = false, 
+            error = ex.Message 
+        });
+    }
 });
 
 // -----------------------------

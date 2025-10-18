@@ -11,12 +11,14 @@ namespace InterReactBridge.Services;
 public class IbService
 {
     private readonly ILogger<IbService> _logger;
+    private readonly TwsConnectionService _twsConnection;
     private IInterReactClient? _client;
     private string? _accountCode;
 
-    public IbService(ILogger<IbService> logger)
+    public IbService(ILogger<IbService> logger, TwsConnectionService twsConnection)
     {
         _logger = logger;
+        _twsConnection = twsConnection;
     }
 
     public async Task<bool> ConnectAsync(string host, int port, int clientId)
@@ -76,7 +78,8 @@ public class IbService
 
     public async Task<object> GetAccountSummary()
     {
-        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        var client = _twsConnection.GetClient();
+        if (client == null) throw new InvalidOperationException("Not connected to IBKR.");
 
         try
         {
@@ -85,7 +88,7 @@ public class IbService
             // Use direct RequestAccountSummary approach
             var summaries = new List<AccountSummary>();
             
-            var sub = _client.Response.OfType<AccountSummary>()
+            var sub = client.Response.OfType<AccountSummary>()
                 .Subscribe(summary => 
                 {
                     _logger.LogInformation("Received AccountSummary: Account={Account}, Tag={Tag}, Value={Value}, Currency={Currency}", 
@@ -94,8 +97,8 @@ public class IbService
                 });
 
             // Request account summary directly with specific request ID
-            var requestId = _client.Request.GetNextId();
-            _client.Request.RequestAccountSummary(requestId, "All");
+            var requestId = client.Request.GetNextId();
+            client.Request.RequestAccountSummary(requestId, "All");
 
             // Wait for summaries
             await Task.Delay(5000);
@@ -126,7 +129,8 @@ public class IbService
 
     public async Task<object> GetPortfolio()
     {
-        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        var client = _twsConnection.GetClient();
+        if (client == null) throw new InvalidOperationException("Not connected to IBKR.");
 
         try
         {
@@ -135,7 +139,7 @@ public class IbService
             // Use direct RequestPositions approach
             var positions = new List<AccountPosition>();
             
-            var sub = _client.Response.OfType<AccountPosition>()
+            var sub = client.Response.OfType<AccountPosition>()
                 .Subscribe(position => 
                 {
                     _logger.LogInformation("Received AccountPosition: Account={Account}, Symbol={Symbol}, Position={Position}, AverageCost={AverageCost}", 
@@ -144,7 +148,7 @@ public class IbService
                 });
 
             // Request positions directly
-            _client.Request.RequestPositions();
+            client.Request.RequestPositions();
 
             // Wait for positions
             await Task.Delay(5000);
@@ -179,7 +183,8 @@ public class IbService
 
     public async Task<object> GetMarketData(string symbol, string secType, string exchange, TimeSpan duration)
     {
-        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        var client = _twsConnection.GetClient();
+        if (client == null) throw new InvalidOperationException("Not connected to IBKR.");
 
         try
         {
@@ -193,7 +198,7 @@ public class IbService
 
             var ticks = new List<object>();
 
-            var sub = _client.Service
+            var sub = client.Service
                 .CreateMarketDataObservable(contract)
                 .OfTickClass(selector => selector.PriceTick)
                 .Subscribe(pt =>
@@ -236,7 +241,8 @@ public class IbService
         string exchange, 
         int sampleSeconds = 30)
     {
-        if (_client == null) throw new InvalidOperationException("Not connected to IBKR.");
+        var client = _twsConnection.GetClient();
+        if (client == null) throw new InvalidOperationException("Not connected to IBKR.");
 
         try
         {
@@ -254,7 +260,7 @@ public class IbService
             var prices = new List<PricePoint>();
             var lastPrice = 0.0;
 
-            var sub = _client.Service
+            var sub = client.Service
                 .CreateMarketDataObservable(contract)
                 .OfTickClass(selector => selector.PriceTick)
                 .Subscribe(pt =>
