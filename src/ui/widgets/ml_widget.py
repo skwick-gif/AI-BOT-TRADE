@@ -1858,16 +1858,8 @@ class MLWidget(QWidget):
         return None
     
     def create_pipeline_tab(self):
-        """Create the pipeline tab widget with responsive scroll area"""
-        from PyQt6.QtWidgets import QScrollArea
-        
-        # Create scroll area for small screens
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        tab_widget = QWidget()
+        """Create the pipeline tab widget"""
+        tab_widget = QWidget(self)  # Set parent to prevent garbage collection
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(5)  # Reduced spacing for small screens
@@ -2211,17 +2203,9 @@ class MLWidget(QWidget):
         main_h_layout.addWidget(progress_frame)
         layout.addLayout(main_h_layout)
         
-        # Set up scroll area for small screens
-        scroll_area.setWidget(tab_widget)
-        
-        # Check screen size and return appropriate widget
-        screen = QtApp.primaryScreen()
-        screen_height = screen.availableGeometry().height()
-        
-        if screen_height <= 768:  # Small screens need scroll
-            return scroll_area
-        else:
-            return tab_widget
+        # Always use the tab_widget directly without scroll area
+        # The scroll area was causing display issues where content appeared too small
+        return tab_widget
     
     def _on_window_changed(self, text: str):
         """Handle window combo box changes to enable/disable lookback field"""
@@ -2266,7 +2250,7 @@ class MLWidget(QWidget):
     def create_diagnostics_tab(self):
         """Create diagnostics tab for system checks"""
         # Keep a minimal diagnostics tab: only title and an empty results area placeholder.
-        tab_widget = QWidget()
+        tab_widget = QWidget(self)  # Set parent to prevent garbage collection
         layout = QVBoxLayout(tab_widget)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)

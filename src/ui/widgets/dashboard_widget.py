@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QHeaderView, QCheckBox, QSpinBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QPalette
+from PyQt6.QtGui import QFont, QPalette, QColor
 
 from core.config_manager import ConfigManager
 from utils.logger import get_logger
@@ -216,11 +216,9 @@ class DashboardWidget(QWidget):
         self.connection_indicator.setToolTip("IBKR connection status")
         title_layout.addWidget(self.connection_indicator)
         
-        # Quick connect button (only shown when disconnected)
-        self.quick_connect_btn = QPushButton("🔌 Connect IBKR")
-        self.quick_connect_btn.setToolTip("Quick connect to IBKR")
-        self.quick_connect_btn.clicked.connect(self.request_ibkr_connection)
-        title_layout.addWidget(self.quick_connect_btn)
+        # Quick connect button completely removed - using InterReactBridge auto-connect
+        # Keep only None reference for compatibility with old code
+        self.quick_connect_btn = None
         
         layout.addLayout(title_layout)
         
@@ -234,18 +232,9 @@ class DashboardWidget(QWidget):
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         
-        # First row: Account metrics and Recent Activity
-        first_row_layout = QHBoxLayout()
-        
-        # Account metrics (left side)
-        self.create_account_metrics()
-        first_row_layout.addWidget(self.account_frame, 2)  # 2/3 of the width
-        
-        # Recent activity (right side)
-        self.create_recent_activity()
-        first_row_layout.addWidget(self.activity_frame, 1)  # 1/3 of the width
-        
-        content_layout.addLayout(first_row_layout)
+        # Account status - simple single line
+        self.create_account_status_line()
+        content_layout.addWidget(self.account_status_line)
         
         # Live ticker (new)
         try:
@@ -350,40 +339,32 @@ class DashboardWidget(QWidget):
         self._live_worker = None
         self._live_stop_flag = None
 
-    def create_account_metrics(self):
-        """Create account metrics section"""
-        self.account_frame = QFrame()
-        self.account_frame.setFrameStyle(QFrame.Shape.Box)
-        self.account_frame.setFixedHeight(150)  # Fixed height to match activity frame
+    def create_account_status_line(self):
+        """Create simple account and portfolio status line"""
+        self.account_status_line = QFrame()
+        self.account_status_line.setFrameStyle(QFrame.Shape.Box)
+        self.account_status_line.setStyleSheet("background-color: #2b2b2b; border: 1px solid #3d3d3d; border-radius: 5px;")
         
-        layout = QVBoxLayout(self.account_frame)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(8)  # Reduced spacing
+        layout = QHBoxLayout(self.account_status_line)
+        layout.setContentsMargins(15, 8, 15, 8)
+        layout.setSpacing(20)
         
-        # Title
-        title = QLabel("Account Overview")
-        title_font = QFont()
-        title_font.setPointSize(12)  # Smaller title to match activity
-        title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
+        # Account info
+        self.account_info_label = QLabel("Account: Loading...")
+        self.account_info_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        layout.addWidget(self.account_info_label)
         
-        # Metrics grid
-        metrics_layout = QHBoxLayout()
-        metrics_layout.setSpacing(8)  # Reduced spacing between cards
+        # Portfolio info
+        self.portfolio_info_label = QLabel("Portfolio: Loading...")
+        self.portfolio_info_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        layout.addWidget(self.portfolio_info_label)
         
-        self.net_liquidation_card = MetricCard("Net Liquidation", "$0.00")
-        self.buying_power_card = MetricCard("Buying Power", "$0.00")
-        self.day_pnl_card = MetricCard("Day P&L", "$0.00")
-        self.unrealized_pnl_card = MetricCard("Unrealized P&L", "$0.00")
+        layout.addStretch()
         
-        metrics_layout.addWidget(self.net_liquidation_card)
-        metrics_layout.addWidget(self.buying_power_card)
-        metrics_layout.addWidget(self.day_pnl_card)
-        metrics_layout.addWidget(self.unrealized_pnl_card)
-        metrics_layout.addStretch()
-        
-        layout.addLayout(metrics_layout)
+        # Connection status
+        self.connection_indicator = QLabel("🔴 Offline")
+        self.connection_indicator.setStyleSheet("color: #f44336; font-weight: bold; font-size: 11px;")
+        layout.addWidget(self.connection_indicator)
 
     # -------- Live stream controls --------
     def toggle_live_stream(self):
@@ -573,74 +554,30 @@ class DashboardWidget(QWidget):
         self.positions_status.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
         layout.addWidget(self.positions_status)
     
-    def create_recent_activity(self):
-        """Create recent activity section"""
-        self.activity_frame = QFrame()
-        self.activity_frame.setFrameStyle(QFrame.Shape.Box)
-        self.activity_frame.setFixedHeight(150)  # Fixed height to match account metrics area
-        
-        layout = QVBoxLayout(self.activity_frame)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(5)
-        
-        # Title with refresh button
-        title_layout = QHBoxLayout()
-        
-        title = QLabel("Recent Activity")
-        title_font = QFont()
-        title_font.setPointSize(12)  # Smaller title
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title_layout.addWidget(title)
-        
-        title_layout.addStretch()
-        
-        # Add refresh button here
-        refresh_btn = QPushButton("🔄")
-        refresh_btn.setFixedSize(30, 25)  # Small compact button
-        refresh_btn.setToolTip("Refresh activity")
-        refresh_btn.clicked.connect(self.refresh_all_data)  # Connect to a method we'll create
-        title_layout.addWidget(refresh_btn)
-        
-        layout.addLayout(title_layout)
-        
-        # Activity list
-        self.activity_label = QLabel("Loading...")
-        self.activity_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.activity_label.setWordWrap(True)
-        self.activity_label.setStyleSheet("font-size: 11px;")  # Smaller text
-        layout.addWidget(self.activity_label)
-    
-    def update_recent_activity(self):
-        """Update recent activity"""
+    def update_account_status_line(self):
+        """Update the simple account and portfolio status line"""
         try:
             if self.ibkr_service and self.ibkr_service.is_connected():
-                # Get account summary for connection verification
-                account_summary = self.ibkr_service.get_account_summary()
-                positions = self.ibkr_service.get_positions()
+                # Show basic status - no HTTP requests here
+                self.account_info_label.setText("Account: Connected")
+                self.account_info_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
                 
-                # Build activity text
-                activity_text = "✅ Connected to IBKR\n"
-                activity_text += f"📊 Account Summary: {len(account_summary)} fields\n"
-                activity_text += f"💼 Positions: {len([p for p in positions if p.get('position', 0) != 0])} active\n"
-                activity_text += f"🔄 Auto-refresh: {self.config.ui.update_interval//1000}s interval\n"
-                activity_text += f"🕒 Last update: {self.get_current_time()}"
+                self.portfolio_info_label.setText("Portfolio: Ready")
+                self.portfolio_info_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
                 
-                self.activity_label.setText(activity_text)
-                self.activity_label.setStyleSheet("color: #4CAF50;")  # Green for connected
+                self.connection_indicator.setText("🟢 Live")
+                self.connection_indicator.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 11px;")
             else:
-                activity_text = "❌ Not connected to IBKR\n"
-                activity_text += "Use Connection menu to connect\n"
-                activity_text += "Ensure TWS is running\n"
-                activity_text += f"🕒 Last check: {self.get_current_time()}"
+                self.account_info_label.setText("Account: Disconnected")
+                self.account_info_label.setStyleSheet("color: #f44336; font-size: 11px;")
                 
-                self.activity_label.setText(activity_text)
-                self.activity_label.setStyleSheet("color: #f44336;")  # Red for disconnected
+                self.portfolio_info_label.setText("Portfolio: Not Available")
+                self.portfolio_info_label.setStyleSheet("color: #f44336; font-size: 11px;")
                 
+                self.connection_indicator.setText("🔴 Offline")
+                self.connection_indicator.setStyleSheet("color: #f44336; font-weight: bold; font-size: 11px;")
         except Exception as e:
-            self.logger.error(f"Error updating recent activity: {e}")
-            self.activity_label.setText(f"❌ Error: {str(e)[:50]}...")
-            self.activity_label.setStyleSheet("color: #f44336;")  # Red for error
+            self.logger.error(f"Error updating account status line: {e}")
     
     def get_current_time(self):
         """Get current time formatted"""
@@ -650,100 +587,27 @@ class DashboardWidget(QWidget):
     def update_data(self):
         """Update dashboard data"""
         try:
-            # Update connection indicator and button visibility
-            if self.ibkr_service and self.ibkr_service.is_connected():
-                self.connection_indicator.setText("🟢 Live")
-                self.connection_indicator.setStyleSheet("color: #4CAF50; font-weight: bold;")
-                self.quick_connect_btn.hide()  # Hide connect button when connected
-            else:
-                self.connection_indicator.setText("🔴 Offline")
-                self.connection_indicator.setStyleSheet("color: #f44336; font-weight: bold;")
-                self.quick_connect_btn.show()  # Show connect button when disconnected
+            # Only update if we have a service - avoid unnecessary work
+            if not self.ibkr_service:
+                return
             
-            # Update all data sections
-            self.update_account_metrics()
+            # Update simple status line
+            self.update_account_status_line()
+            
+            # Update portfolio table (no blocking calls)
             self.update_portfolio_summary()
-            self.update_recent_activity()
-            
+        
         except Exception as e:
             self.logger.error(f"Error updating dashboard data: {e}")
             self.connection_indicator.setText("⚠️ Error")
-            self.connection_indicator.setStyleSheet("color: #ff9800; font-weight: bold;")
-            self.quick_connect_btn.show()  # Show connect button on error
+            self.connection_indicator.setStyleSheet("color: #ff9800; font-weight: bold; font-size: 11px;")
     
     def request_ibkr_connection(self):
         """Request IBKR connection from main window"""
         self.logger.info("Dashboard requested IBKR connection")
         self.connection_requested.emit()
     
-    def update_account_metrics(self):
-        """Update account metrics with real data"""
-        try:
-            if self.ibkr_service and self.ibkr_service.is_connected():
-                # Get real account data from IBKR
-                account_summary = self.ibkr_service.get_account_summary()
-                
-                # Update Net Liquidation Value
-                net_liq = account_summary.get('NetLiquidation', {})
-                if net_liq:
-                    net_liq_value = f"${float(net_liq.get('value', 0)):,.2f}"
-                    currency = net_liq.get('currency', 'USD')
-                    self.net_liquidation_card.update_value(net_liq_value, currency)
-                
-                # Update Buying Power
-                buying_power = account_summary.get('BuyingPower', {})
-                if buying_power:
-                    bp_value = f"${float(buying_power.get('value', 0)):,.2f}"
-                    currency = buying_power.get('currency', 'USD')
-                    self.buying_power_card.update_value(bp_value, currency)
-                else:
-                    # Try alternative field names
-                    excess_liquidity = account_summary.get('ExcessLiquidity', {})
-                    if excess_liquidity:
-                        bp_value = f"${float(excess_liquidity.get('value', 0)):,.2f}"
-                        currency = excess_liquidity.get('currency', 'USD')
-                        self.buying_power_card.update_value(bp_value, f"{currency} (Excess)")
-                
-                # Update Day P&L
-                day_pnl = account_summary.get('DayTradesRemaining', {})
-                realized_pnl = account_summary.get('RealizedPnL', {})
-                if realized_pnl:
-                    pnl_value = float(realized_pnl.get('value', 0))
-                    pnl_formatted = f"${abs(pnl_value):,.2f}"
-                    if pnl_value >= 0:
-                        pnl_formatted = f"+{pnl_formatted}"
-                    else:
-                        pnl_formatted = f"-{pnl_formatted}"
-                    self.day_pnl_card.update_value(pnl_formatted, "Realized")
-                
-                # Update Unrealized P&L
-                unrealized_pnl = account_summary.get('UnrealizedPnL', {})
-                if unrealized_pnl:
-                    pnl_value = float(unrealized_pnl.get('value', 0))
-                    pnl_formatted = f"${abs(pnl_value):,.2f}"
-                    if pnl_value >= 0:
-                        pnl_formatted = f"+{pnl_formatted}"
-                    else:
-                        pnl_formatted = f"-{pnl_formatted}"
-                    self.unrealized_pnl_card.update_value(pnl_formatted, "Unrealized")
-                
-                self.logger.debug(f"Updated account metrics with {len(account_summary)} IBKR values")
-                
-            else:
-                # Show disconnected state
-                self.net_liquidation_card.update_value("Connect to IBKR", "to view data")
-                self.buying_power_card.update_value("Connect to IBKR", "to view data")
-                self.day_pnl_card.update_value("Connect to IBKR", "to view data")
-                self.unrealized_pnl_card.update_value("Connect to IBKR", "to view data")
-                
-        except Exception as e:
-            self.logger.error(f"Error updating account metrics: {e}")
-            # Show error state
-            self.net_liquidation_card.update_value("Error", "Check connection")
-            self.buying_power_card.update_value("Error", "Check connection")
-            self.day_pnl_card.update_value("Error", "Check connection")
-            self.unrealized_pnl_card.update_value("Error", "Check connection")
-    
+
     def update_portfolio_summary(self):
         """Update portfolio summary with real IBKR positions"""
         try:
@@ -762,6 +626,14 @@ class DashboardWidget(QWidget):
                 self.positions_status.setText("❌ Connect to IBKR to view real positions")
                 self.positions_status.setStyleSheet("color: #f44336; font-weight: bold;")
                 return
+            
+            # Don't fetch portfolio here - it will block UI
+            # Instead, show loading state
+            self.positions_table.setRowCount(0)
+            self.positions_status.setText("🔄 Connected - Data will load automatically...")
+            self.positions_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+            self.logger.info("Connected - waiting for background data fetch")
+            return
             
             # Get real portfolio data from IBKR
             self.logger.info("Fetching portfolio from IBKR...")
@@ -878,14 +750,138 @@ class DashboardWidget(QWidget):
         """Set the IBKR service reference"""
         self.ibkr_service = ibkr_service
         self.logger.info("IBKR service set for dashboard")
-        # Update data immediately
-        self.update_data()
+        
+        # Connect to signals if available
+        if hasattr(ibkr_service, 'portfolio_updated'):
+            ibkr_service.portfolio_updated.connect(self.on_portfolio_data_ready)
+            self.logger.info("Connected to portfolio_updated signal")
+        
+        if hasattr(ibkr_service, 'account_updated'):
+            ibkr_service.account_updated.connect(self.on_account_data_ready)
+            self.logger.info("Connected to account_updated signal")
+        
+        # Log detailed connection status
+        try:
+            connected = self.ibkr_service.is_connected() if self.ibkr_service else False
+            tws_connected = self.ibkr_service.is_tws_connected() if hasattr(self.ibkr_service, 'is_tws_connected') and self.ibkr_service else False
+            self.logger.info(f"Connection status: bridge={connected}, TWS={tws_connected}")
+        except Exception as e:
+            self.logger.error(f"Error checking connection: {e}")
+        
+        # DON'T call update_data() here - just update status line
+        self.update_account_status_line()
+        
+        # Update portfolio status
+        if self.ibkr_service and self.ibkr_service.is_connected():
+            self.positions_status.setText("🔄 Connected - Waiting for data...")
+            self.positions_status.setStyleSheet("color: #2196F3; font-weight: bold;")
+        else:
+            self.positions_status.setText("❌ Not connected to IBKR")
+            self.positions_status.setStyleSheet("color: #f44336; font-weight: bold;")
+        
         # Enable/disable live controls
         try:
             connected = bool(self.ibkr_service and self.ibkr_service.is_connected())
             self.live_start_btn.setEnabled(connected)
         except Exception:
             pass
+    
+    def on_portfolio_data_ready(self, portfolio_data: list):
+        """Handle portfolio data received from background fetch"""
+        try:
+            self.logger.info(f"Received portfolio data: {len(portfolio_data)} positions")
+            
+            # Filter active positions
+            active_positions = [pos for pos in portfolio_data if abs(pos.get('position', 0)) > 0]
+            
+            # Update table
+            self.positions_table.setRowCount(len(active_positions))
+            
+            if active_positions:
+                self.positions_status.setText(f"📊 {len(active_positions)} positions • Updated: {self.get_current_time()}")
+                self.positions_status.setStyleSheet("color: #4CAF50; font-weight: bold;")
+                
+                for row, pos in enumerate(active_positions):
+                    # Symbol
+                    symbol_item = QTableWidgetItem(str(pos.get('symbol', 'N/A')))
+                    symbol_item.setFlags(symbol_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    self.positions_table.setItem(row, 0, symbol_item)
+                    
+                    # Shares
+                    position_value = pos.get('position', 0)
+                    shares_item = QTableWidgetItem(f"{position_value:,.0f}")
+                    shares_item.setFlags(shares_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    if position_value > 0:
+                        shares_item.setForeground(QColor("#2e7d32"))
+                    else:
+                        shares_item.setForeground(QColor("#d32f2f"))
+                    self.positions_table.setItem(row, 1, shares_item)
+                    
+                    # Average Cost
+                    avg_cost = pos.get('average_cost', 0)
+                    avg_item = QTableWidgetItem(f"${avg_cost:.2f}")
+                    avg_item.setFlags(avg_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    self.positions_table.setItem(row, 2, avg_item)
+                    
+                    # Market Price
+                    mkt_price = pos.get('market_price', 0)
+                    mkt_item = QTableWidgetItem(f"${mkt_price:.2f}")
+                    mkt_item.setFlags(mkt_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    self.positions_table.setItem(row, 3, mkt_item)
+                    
+                    # Market Value
+                    mkt_value = pos.get('market_value', 0)
+                    val_item = QTableWidgetItem(f"${mkt_value:,.2f}")
+                    val_item.setFlags(val_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    self.positions_table.setItem(row, 4, val_item)
+                    
+                    # P&L
+                    pnl = pos.get('unrealized_pnl', 0)
+                    pnl_item = QTableWidgetItem(f"${pnl:+,.2f}")
+                    pnl_item.setFlags(pnl_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                    if pnl >= 0:
+                        pnl_item.setForeground(QColor("#2e7d32"))
+                    else:
+                        pnl_item.setForeground(QColor("#d32f2f"))
+                    self.positions_table.setItem(row, 5, pnl_item)
+                
+                # Update portfolio info in status line
+                total_value = sum(pos.get('market_value', 0) for pos in active_positions)
+                total_pnl = sum(pos.get('unrealized_pnl', 0) for pos in active_positions)
+                self.portfolio_info_label.setText(f"Portfolio: {len(active_positions)} positions | ${total_value:,.0f} | P&L: ${total_pnl:+,.0f}")
+                if total_pnl >= 0:
+                    self.portfolio_info_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+                else:
+                    self.portfolio_info_label.setStyleSheet("color: #f44336; font-size: 11px;")
+            else:
+                self.positions_status.setText("📊 No active positions")
+                self.positions_status.setStyleSheet("color: #666; font-style: italic;")
+                self.portfolio_info_label.setText("Portfolio: No positions")
+                
+        except Exception as e:
+            self.logger.error(f"Error processing portfolio data: {e}")
+    
+    def on_account_data_ready(self, account_data: dict):
+        """Handle account data received from background fetch"""
+        try:
+            self.logger.info(f"Received account data: {len(account_data)} fields")
+            
+            # Extract key metrics
+            net_liq = account_data.get('NetLiquidation', {})
+            buying_power = account_data.get('BuyingPower', {}) or account_data.get('ExcessLiquidity', {})
+            
+            if net_liq or buying_power:
+                net_liq_val = float(net_liq.get('value', 0)) if net_liq else 0
+                bp_val = float(buying_power.get('value', 0)) if buying_power else 0
+                
+                self.account_info_label.setText(f"Account: ${net_liq_val:,.0f} | Buying Power: ${bp_val:,.0f}")
+                self.account_info_label.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            else:
+                self.account_info_label.setText("Account: Connected (no data yet)")
+                self.account_info_label.setStyleSheet("color: #ff9800; font-size: 11px;")
+                
+        except Exception as e:
+            self.logger.error(f"Error processing account data: {e}")
     
     def refresh_data(self):
         """Manually refresh all data"""

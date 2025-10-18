@@ -113,33 +113,80 @@ def fetch_text(url, retries=4, backoff=1.8, timeout=45):
     raise RuntimeError(f"Failed to fetch {url}: {last}")
 
 def clean_tickers(seq):
-    """Normalize and filter ticker symbols.
-
-    - Uppercase and strip whitespace
-    - Replace '.' with '-' to match Yahoo format
-    - Drop empty, too-short, or invalid symbols
-    - Keep only alphanumeric plus '-'
+    """Normalize and filter ticker symbols with comprehensive filtering.
+    
+    Filters out:
+    - Test/dummy/placeholder tickers
+    - Warrants (ending with W, except specific ETFs)
+    - Class shares (with hyphens like BRK-A, BRK-B)
+    - Invalid format tickers
+    - Problematic patterns
     """
-    cleaned = []
-    for s in seq:
-        if s is None:
+    out = []
+    
+    # רשימת patterns למניות בעייתיות
+    blacklisted_patterns = [
+        'TEST',      # מניות test
+        'DUMMY',     # מניות dummy  
+        'ZZZ',       # מניות placeholder
+        'XXX',       # מניות placeholder
+        'TEMP',      # מניות זמניות
+        'BLANK',     # מניות ריקות
+    ]
+    
+    # רשימת מניות specific שידועות כבעייתיות
+    blacklisted_exact = [
+        'ZAZZT', 'ZBZX', 'ZCZZT', 'ZBZZT', 'ZEXIT', 'ZIEXT', 'ZTEST',
+        'XTSLA', 'XTEST', 'ZXIET', 'ZZAZT', 'ZZINT', 'ZZEXT', 'ZZTEST', 
+        'ZZDIV', 'XTSLA'
+    ]
+    
+    for x in seq:
+        t = str(x).strip().upper().replace(".", "-")
+        
+        # בדוק אם זה טיקר תקני (אותיות בלבד, 1-5 תווים, עם אופציה לקו ותווים נוספים)
+        if not t or not re.fullmatch(r"[A-Z]{1,5}(?:-[A-Z]{1,3})?", t):
             continue
-        t = str(s).strip().upper()
-        if not t:
+            
+        # סנן מניות בעייתיות - patterns
+        is_blacklisted = False
+        for pattern in blacklisted_patterns:
+            if pattern in t:
+                is_blacklisted = True
+                break
+        
+        if is_blacklisted:
             continue
-        # remove trailing markers like '^' or spaces, and unify dotted tickers
-        if t.endswith('^'):
-            t = t[:-1]
-        t = t.split()[0]
-        t = t.replace('.', '-')
-        # filter invalid
+            
+        # סנן מניות בעייתיות - exact matches
+        if t in blacklisted_exact:
+            continue
+            
+        # סנן תעודות אופציה (WARRANTS) - מסתיימות ב-W
+        # אבל שמור ETFs ספציפיים
+        if t.endswith('W') and t not in ['SDOW', 'UDOW']:
+            continue
+            
+        # סנן מניות Class (יש קו באמצע) - BRK-A, BRK-B, META-A וכו'
+        if '-' in t:
+            continue
+            
+        # סנן מניות קצרות מדי (תו בודד - לא תקניות)
         if len(t) < 2:
             continue
-        if not all(ch.isalnum() or ch == '-' for ch in t):
+            
+        # סנן מניות עם patterns חשודים
+        if t.startswith('Z') and len(t) >= 4 and t.endswith('T'):
+            # מניות שמתחילות ב-Z ומסתיימות ב-T (כמו ZTEST, ZEXIT)
             continue
-        cleaned.append(t)
-    # unique + stable order
-    return sorted(set(cleaned))
+            
+        out.append(t)
+    
+    filtered_count = len(seq) - len(out)
+    if filtered_count > 0:
+        print(f"Filtered out {filtered_count} tickers (warrants, class shares, invalid)")
+    
+    return sorted(set(out))
 def try_one_url(txt):
     try:
         df = pd.read_csv(StringIO(txt), sep="|")
@@ -317,7 +364,7 @@ def get_all_tickers():
     print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out tickers with '-' or invalid)")
     return filtered
 
-def update_price_data(ticker, start_date, folder):
+def update_price_data(ticker, start_date, folder, latest_only=False):
     file_path = os.path.join(folder, ticker, f"{ticker}_price.csv")
     os.makedirs(os.path.join(folder, ticker), exist_ok=True)
     if os.path.exists(file_path):
@@ -383,8 +430,20 @@ def update_price_data(ticker, start_date, folder):
         if start_date_dt <= datetime.today():
             start_download = start_date_dt.strftime("%Y-%m-%d")
         else:
-            print(f"No new price data for {ticker}.")
+            print(f"{ticker}: Already up to date")
             return
+    
+    # If latest_only mode, override to download only recent data (last 5 days)
+    if latest_only:
+        recent_start = (datetime.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+        if last_date:
+            # Only download if we're missing recent days
+            days_missing = (datetime.today() - last_date).days
+            if days_missing <= 1:
+                print(f"{ticker}: Up to date (latest-only mode)")
+                return
+        start_download = recent_start
+        print(f"{ticker}: Downloading latest data from {start_download}")
     try:
         new_df = yf.download(ticker, start=start_download, progress=False, auto_adjust=True)
         if new_df.empty:
@@ -706,8 +765,9 @@ def scrape_all_data(ticker, folder):
         print(f"Error saving data for {ticker}: {e}")
         return False
 
-def process_tickers_daily(limit: int | None = None):
+def process_tickers_daily(limit: int | None = None, latest_only: bool = False, skip_fundamentals: bool = False):
     print("Starting daily ticker processing...")
+    print(f"Options: limit={limit or 'all'}, latest_only={latest_only}, skip_fundamentals={skip_fundamentals}")
     all_tickers = get_all_tickers()
     print(f"Found {len(all_tickers)} total tickers")
     try:
@@ -731,44 +791,84 @@ def process_tickers_daily(limit: int | None = None):
         try:
             price_file = os.path.join(DATA_FOLDER, ticker, f"{ticker}_price.csv")
             needs_price_update = True
+            
             if os.path.exists(price_file):
                 try:
                     df = pd.read_csv(price_file, parse_dates=['Date'])
                     last_date = df['Date'].max()
                     days_since_update = (datetime.now() - last_date.tz_localize(None) if last_date.tz else datetime.now() - last_date).days
                     has_data = not df[['Open', 'High', 'Low', 'Close']].isnull().all().all()
-                    if days_since_update < 1 and has_data:
-                        needs_price_update = False
-                except:
+                    
+                    # If latest_only mode, only update if missing yesterday/today
+                    if latest_only:
+                        if days_since_update < 1 and has_data:
+                            needs_price_update = False
+                            print(f"{ticker}: Already up to date (latest-only mode)")
+                    else:
+                        # Normal mode - update if any gap exists
+                        if days_since_update < 1 and has_data:
+                            needs_price_update = False
+                except Exception as e:
+                    print(f"{ticker}: Error checking existing data: {e}")
                     pass
+            
             if needs_price_update:
                 print(f"Updating price data for {ticker}")
-                update_price_data(ticker, START_DATE, DATA_FOLDER)
+                update_price_data(ticker, START_DATE, DATA_FOLDER, latest_only=latest_only)
                 updated_prices += 1
-            advanced_file = os.path.join(DATA_FOLDER, ticker, f"{ticker}_advanced.json")
-            needs_advanced_update = True
-            if os.path.exists(advanced_file):
-                try:
-                    with open(advanced_file, 'r') as f:
-                        data = json.load(f)
-                    if len(data) >= 10:
-                        needs_advanced_update = False
-                except:
-                    pass
-            if needs_advanced_update:
-                print(f"Updating advanced data for {ticker}")
-                if scrape_all_data(ticker, DATA_FOLDER):
-                    updated_advanced += 1
+            
+            # Handle fundamentals based on skip_fundamentals flag
+            if not skip_fundamentals:
+                advanced_file = os.path.join(DATA_FOLDER, ticker, f"{ticker}_advanced.json")
+                needs_advanced_update = True
+                if os.path.exists(advanced_file):
+                    try:
+                        with open(advanced_file, 'r') as f:
+                            data = json.load(f)
+                        # Check if we have sufficient fundamentals data
+                        if len(data) >= 10:
+                            needs_advanced_update = False
+                            print(f"{ticker}: Fundamentals already exist")
+                    except Exception as e:
+                        print(f"{ticker}: Error reading fundamentals: {e}")
+                        pass
+                
+                if needs_advanced_update:
+                    print(f"Updating fundamentals for {ticker}")
+                    try:
+                        if scrape_all_data(ticker, DATA_FOLDER):
+                            updated_advanced += 1
+                    except Exception as e:
+                        print(f"{ticker}: Error scraping fundamentals: {e}")
+            else:
+                print(f"{ticker}: Skipping fundamentals (disabled)")
+                
         except Exception as e:
             print(f"Error processing {ticker}: {e}")
     with open(TODO_FILE, 'w') as f:
         json.dump(todo, f)
     with open(COMPLETED_FILE, 'w') as f:
         json.dump(completed, f)
-    print(f"Daily processing completed. Updated {updated_prices} price data, {updated_advanced} advanced data.")
+    
+    summary = f"Daily processing completed. Updated {updated_prices} price data"
+    if not skip_fundamentals:
+        summary += f", {updated_advanced} fundamentals"
+    else:
+        summary += " (fundamentals skipped)"
+    if latest_only:
+        summary += " [latest-only mode]"
+    print(summary)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Daily stock data updater")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of tickers to process")
+    parser.add_argument("--latest-only", action="store_true", help="Download only latest day instead of filling gaps")
+    parser.add_argument("--no-fundamentals", action="store_true", help="Skip fundamentals download")
     args = parser.parse_args()
-    process_tickers_daily(limit=args.limit)
+    
+    # Pass flags to the main function
+    process_tickers_daily(
+        limit=args.limit,
+        latest_only=args.latest_only,
+        skip_fundamentals=args.no_fundamentals
+    )

@@ -1,21 +1,20 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QGroupBox, QFormLayout,
     QLabel, QTimeEdit, QSpinBox, QHBoxLayout, QPushButton, QProgressBar,
-    QTextEdit, QSizePolicy
+    QTextEdit, QSizePolicy, QCheckBox, QTableWidget, QTableWidgetItem
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from pathlib import Path
 import sys
+import os
 import subprocess
 import json
 from datetime import datetime, time as dtime
 
 from services.data_update_service import DataUpdateService
 import pandas as pd
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
 
 
 class DataWidget(QWidget):
@@ -246,6 +245,17 @@ class DataWidget(QWidget):
         self.limit_spin.setToolTip("Process only first N tickers (0 = all)")
         form.addRow("Batch limit:", self.limit_spin)
 
+        # Download options
+        self.latest_only_check = QCheckBox("Download only latest day (faster)")
+        self.latest_only_check.setToolTip("Only download yesterday/today's data instead of filling gaps")
+        self.latest_only_check.setChecked(False)
+        form.addRow("Latest only:", self.latest_only_check)
+
+        self.include_fundamentals_check = QCheckBox("Include fundamentals data")
+        self.include_fundamentals_check.setToolTip("Download company info (expensive, run weekly/monthly)")
+        self.include_fundamentals_check.setChecked(False)
+        form.addRow("Fundamentals:", self.include_fundamentals_check)
+
         layout.addWidget(schedule_group)
 
         # Control Buttons
@@ -341,9 +351,14 @@ class DataWidget(QWidget):
         self.stop_btn.setEnabled(True)
         self.run_now_btn.setEnabled(False)
         limit = int(self.limit_spin.value() or 0)
+        latest_only = self.latest_only_check.isChecked()
+        include_fundamentals = self.include_fundamentals_check.isChecked()
 
         # Clear previous logs
         self.log_view.clear()
+        
+        # Log settings
+        self._append_log(f"Settings: limit={limit or 'all'}, latest_only={latest_only}, fundamentals={include_fundamentals}")
 
         # spawn a subprocess runner if adapter exists, otherwise fallback to service
         class SubprocRunner(QObject):
@@ -369,24 +384,50 @@ class DataWidget(QWidget):
 
             def run(self):
                 try:
-                    self.proc = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=False, text=True, bufsize=1)
-                    for ln in self.proc.stdout:
+                    # Use unbuffered output for real-time logs on Windows
+                    env = os.environ.copy()
+                    env['PYTHONUNBUFFERED'] = '1'
+                    
+                    self.proc = subprocess.Popen(
+                        self.cmd, 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.STDOUT, 
+                        shell=False, 
+                        text=True, 
+                        bufsize=0,  # Unbuffered for real-time output
+                        env=env
+                    )
+                    
+                    # Read output line by line in real-time
+                    for ln in iter(self.proc.stdout.readline, ''):
+                        if not ln:
+                            break
                         ln = ln.rstrip('\n')
                         if ln:
                             self.line.emit(ln)
+                    
                     self.proc.wait()
                     self.finished.emit()
                 except Exception as e:
                     self.failed.emit(str(e))
 
         python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
-        adapter = Path(__file__).parent.parent.parent.parent / 'tools' / 'download_stocks.py'
+        
+        # Use separate scripts for prices and fundamentals
+        # include_fundamentals checkbox means: "also download fundamentals AFTER prices"
+        # So we always start with prices, and optionally run fundamentals after
+        tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
+        
+        # Always download prices first (fast)
+        adapter = tools_dir / 'download_prices.py'
+        
         if adapter.exists():
-            if limit == 0:
-                cmd = [python_exec, str(adapter)]
-            else:
-                cmd = [python_exec, str(adapter), '--limit', str(limit)]
-            self._append_log(f"Starting adapter: {cmd}")
+            cmd = [python_exec, str(adapter)]
+            if limit > 0:
+                cmd.extend(['--limit', str(limit)])
+            if latest_only:
+                cmd.append('--latest-only')
+            self._append_log(f"Starting price download: {' '.join(cmd)}")
             runner = SubprocRunner(cmd)
             thread = QThread(self)
             runner.moveToThread(thread)
@@ -434,8 +475,15 @@ class DataWidget(QWidget):
         except Exception:
             pass
         self._append_log(f"Schedule saved: {t.strftime('%H:%M')}")
+        
+        # Save all settings including checkboxes
+        config = {
+            "time": t.strftime('%H:%M'),
+            "latest_only": self.latest_only_check.isChecked(),
+            "include_fundamentals": self.include_fundamentals_check.isChecked()
+        }
         try:
-            self._cfg_path.write_text(json.dumps({"time": t.strftime('%H:%M')}), encoding='utf-8')
+            self._cfg_path.write_text(json.dumps(config, indent=2), encoding='utf-8')
         except Exception:
             pass
 
@@ -481,6 +529,14 @@ class DataWidget(QWidget):
         try:
             if self._cfg_path.exists():
                 obj = json.loads(self._cfg_path.read_text(encoding='utf-8'))
+                
+                # Load checkboxes if available
+                if hasattr(self, 'latest_only_check'):
+                    self.latest_only_check.setChecked(obj.get("latest_only", False))
+                if hasattr(self, 'include_fundamentals_check'):
+                    self.include_fundamentals_check.setChecked(obj.get("include_fundamentals", False))
+                
+                # Load time
                 val = obj.get("time")
                 if isinstance(val, str) and len(val) == 5:
                     hh, mm = val.split(":")
