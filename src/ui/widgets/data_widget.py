@@ -246,10 +246,12 @@ class DataWidget(QWidget):
         form.addRow("Batch limit:", self.limit_spin)
 
         # Download options
+        # Note: latest_only removed - script always downloads smartly (from START_DATE or continues from last date)
         self.latest_only_check = QCheckBox("Download only latest day (faster)")
-        self.latest_only_check.setToolTip("Only download yesterday/today's data instead of filling gaps")
+        self.latest_only_check.setToolTip("Script now automatically downloads from 2020-01-01 or continues from last date")
         self.latest_only_check.setChecked(False)
-        form.addRow("Latest only:", self.latest_only_check)
+        self.latest_only_check.setEnabled(False)  # Disabled - feature removed
+        self.latest_only_check.setVisible(False)  # Hidden from UI
 
         self.include_fundamentals_check = QCheckBox("Include fundamentals data")
         self.include_fundamentals_check.setToolTip("Download company info (expensive, run weekly/monthly)")
@@ -277,8 +279,9 @@ class DataWidget(QWidget):
         buttons_layout.addStretch()
         layout.addLayout(buttons_layout)
 
-        # Status and Progress
+        # Status and Progress (next_run_label hidden - not used for manual runs)
         self.next_run_label = QLabel("Next run: --")
+        self.next_run_label.setVisible(False)  # Hidden - only relevant for scheduled runs
         layout.addWidget(self.next_run_label)
 
         self.progress = QProgressBar()
@@ -425,8 +428,7 @@ class DataWidget(QWidget):
             cmd = [python_exec, str(adapter)]
             if limit > 0:
                 cmd.extend(['--limit', str(limit)])
-            if latest_only:
-                cmd.append('--latest-only')
+            # Note: --latest-only removed - script always downloads from START_DATE or continues from last date
             self._append_log(f"Starting price download: {' '.join(cmd)}")
             runner = SubprocRunner(cmd)
             thread = QThread(self)
@@ -514,6 +516,155 @@ class DataWidget(QWidget):
             pass
 
     def _on_adapter_finished(self):
+        """Called when price download finishes - optionally run fundamentals and parquet conversion"""
+        # Check if we need to download fundamentals
+        if hasattr(self, 'include_fundamentals_check') and self.include_fundamentals_check.isChecked():
+            self._append_log("Starting fundamentals download...")
+            self._run_fundamentals_download()
+        else:
+            # No fundamentals - go straight to parquet conversion
+            self._append_log("Skipping fundamentals (not selected)")
+            self._run_parquet_conversion()
+    
+    def _run_fundamentals_download(self):
+        """Run fundamentals download after prices"""
+        tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
+        fundamentals_script = tools_dir / 'download_fundamentals.py'
+        
+        if not fundamentals_script.exists():
+            self._append_log("⚠️ download_fundamentals.py not found - skipping")
+            self._run_parquet_conversion()
+            return
+        
+        python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
+        limit = int(self.limit_spin.value() or 0)
+        
+        cmd = [python_exec, str(fundamentals_script)]
+        if limit > 0:
+            cmd.extend(['--limit', str(limit)])
+        
+        self._append_log(f"Running: {' '.join(cmd)}")
+        
+        class SubprocRunner(QObject):
+            finished = pyqtSignal()
+            line = pyqtSignal(str)
+            failed = pyqtSignal(str)
+
+            def __init__(self, cmd):
+                super().__init__()
+                self.cmd = cmd
+                self.proc = None
+
+            def run(self):
+                try:
+                    env = os.environ.copy()
+                    env['PYTHONUNBUFFERED'] = '1'
+                    
+                    self.proc = subprocess.Popen(
+                        self.cmd, 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.STDOUT, 
+                        shell=False, 
+                        text=True, 
+                        bufsize=0,
+                        env=env
+                    )
+                    
+                    for ln in iter(self.proc.stdout.readline, ''):
+                        if not ln:
+                            break
+                        ln = ln.rstrip('\n')
+                        if ln:
+                            self.line.emit(ln)
+                    
+                    self.proc.wait()
+                    self.finished.emit()
+                except Exception as e:
+                    self.failed.emit(str(e))
+        
+        runner = SubprocRunner(cmd)
+        thread = QThread(self)
+        runner.moveToThread(thread)
+        thread.started.connect(runner.run)
+        runner.line.connect(self._append_log)
+        runner.failed.connect(lambda msg: self._append_log(f"Fundamentals error: {msg}"))
+        runner.finished.connect(lambda: (self._append_log("Fundamentals finished."), thread.quit(), self._run_parquet_conversion()))
+        thread.finished.connect(lambda: setattr(self, "_fundamentals_thread", None))
+        self._fundamentals_runner = runner
+        self._fundamentals_thread = thread
+        thread.start()
+    
+    def _run_parquet_conversion(self):
+        """Convert CSV files to Parquet after download completes"""
+        self._append_log("Starting Parquet conversion...")
+        
+        scripts_dir = Path(__file__).parent.parent.parent.parent / 'scripts'
+        parquet_script = scripts_dir / 'convert_stock_data_to_parquet.py'
+        
+        if not parquet_script.exists():
+            self._append_log("⚠️ convert_stock_data_to_parquet.py not found - skipping")
+            self._finalize_download()
+            return
+        
+        python_exec = Path(sys.executable).as_posix() if hasattr(sys, 'executable') else 'python'
+        cmd = [python_exec, str(parquet_script)]
+        
+        self._append_log(f"Running: {' '.join(cmd)}")
+        
+        class SubprocRunner(QObject):
+            finished = pyqtSignal()
+            line = pyqtSignal(str)
+            failed = pyqtSignal(str)
+
+            def __init__(self, cmd):
+                super().__init__()
+                self.cmd = cmd
+                self.proc = None
+
+            def run(self):
+                try:
+                    env = os.environ.copy()
+                    env['PYTHONUNBUFFERED'] = '1'
+                    
+                    self.proc = subprocess.Popen(
+                        self.cmd, 
+                        stdout=subprocess.PIPE, 
+                        stderr=subprocess.STDOUT, 
+                        shell=False, 
+                        text=True, 
+                        bufsize=0,
+                        env=env
+                    )
+                    
+                    for ln in iter(self.proc.stdout.readline, ''):
+                        if not ln:
+                            break
+                        ln = ln.rstrip('\n')
+                        if ln:
+                            self.line.emit(ln)
+                    
+                    self.proc.wait()
+                    self.finished.emit()
+                except Exception as e:
+                    self.failed.emit(str(e))
+        
+        runner = SubprocRunner(cmd)
+        thread = QThread(self)
+        runner.moveToThread(thread)
+        thread.started.connect(runner.run)
+        runner.line.connect(self._append_log)
+        runner.failed.connect(lambda msg: self._append_log(f"Parquet conversion error: {msg}"))
+        runner.finished.connect(lambda: (self._append_log("✅ Parquet conversion finished!"), thread.quit(), self._finalize_download()))
+        thread.finished.connect(lambda: setattr(self, "_parquet_thread", None))
+        self._parquet_runner = runner
+        self._parquet_thread = thread
+        thread.start()
+    
+    def _finalize_download(self):
+        """Final cleanup after all download stages complete"""
+        self._append_log("="*60)
+        self._append_log("🎉 All downloads and conversions complete!")
+        self._append_log("="*60)
         self.run_now_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._adapter_runner = None
