@@ -7,6 +7,10 @@ Entry point for the trading application with AI agent integration
 import sys
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add src directory to Python path
 src_path = Path(__file__).parent / "src"
@@ -53,26 +57,34 @@ def main():
     try:
         # Initialize configuration
         config = ConfigManager()
+        logger.info("Config loaded")
         
         # Create and setup application
         app = setup_application()
+        logger.info("QApplication created")
 
         # Create main window
         main_window = MainWindow()
+        logger.info("Main window created")
+        
         # Start in fullscreen-like mode (maximized for better Windows UX)
         main_window.showMaximized()
+        logger.info("Main window shown")
 
         # Auto-connect disabled by user request
         # QTimer.singleShot(800, main_window.auto_connect_ibkr)
 
-        logger.info("Application started successfully")
+        logger.info("Application started successfully - entering event loop")
 
         # Start event loop
         sys.exit(app.exec())
         
     except Exception as e:
+        import traceback
         logger.error(f"Failed to start application: {e}")
+        logger.error(traceback.format_exc())
         print(f"Error: {e}")
+        print(traceback.format_exc())
         sys.exit(1)
 
 
