@@ -438,6 +438,7 @@ class DataWidget(QWidget):
             runner.failed.connect(lambda msg: self._append_log(f"Adapter error: {msg}"))
             runner.finished.connect(lambda: (self._append_log("Adapter finished."), thread.quit(), self._on_adapter_finished()))
             thread.finished.connect(lambda: setattr(self, "_adapter_thread", None))
+            runner.failed.connect(lambda msg: (self._append_log(f"Adapter error: {msg}"), self._finalize_download()))
             self._adapter_runner = runner
             self._adapter_thread = thread
             thread.start()
@@ -452,6 +453,7 @@ class DataWidget(QWidget):
 
     def _on_stop(self):
         """Stop the running update"""
+        # Stop adapter (price download)
         try:
             if getattr(self, "_adapter_runner", None):
                 self._adapter_runner.stop()
@@ -459,15 +461,40 @@ class DataWidget(QWidget):
                 self._adapter_thread.quit()
                 self._adapter_thread.wait(3000)
                 self._adapter_thread = None
-        except Exception:
-            pass
+        except Exception as e:
+            self._append_log(f"Error stopping price download: {e}")
+        
+        # Stop fundamentals download
+        try:
+            if getattr(self, "_fundamentals_runner", None):
+                self._fundamentals_runner.stop()
+            if getattr(self, "_fundamentals_thread", None):
+                self._fundamentals_thread.quit()
+                self._fundamentals_thread.wait(3000)
+                self._fundamentals_thread = None
+        except Exception as e:
+            self._append_log(f"Error stopping fundamentals: {e}")
+        
+        # Stop parquet conversion
+        try:
+            if getattr(self, "_parquet_runner", None):
+                self._parquet_runner.stop()
+            if getattr(self, "_parquet_thread", None):
+                self._parquet_thread.quit()
+                self._parquet_thread.wait(3000)
+                self._parquet_thread = None
+        except Exception as e:
+            self._append_log(f"Error stopping parquet conversion: {e}")
+        
+        # Stop service
         try:
             self._service.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            self._append_log(f"Error stopping service: {e}")
+        
         self.stop_btn.setEnabled(False)
         self.run_now_btn.setEnabled(True)
-        self._append_log("Stop requested")
+        self._append_log("⏹️ Stop requested - terminating all processes...")
 
     def on_save(self):
         """Save the schedule configuration"""
@@ -555,6 +582,17 @@ class DataWidget(QWidget):
                 self.cmd = cmd
                 self.proc = None
 
+            def stop(self):
+                try:
+                    if self.proc and self.proc.poll() is None:
+                        self.proc.terminate()
+                        try:
+                            self.proc.wait(timeout=3)
+                        except Exception:
+                            self.proc.kill()
+                except Exception as e:
+                    self.failed.emit(f"Stop failed: {e}")
+
             def run(self):
                 try:
                     env = os.environ.copy()
@@ -587,7 +625,7 @@ class DataWidget(QWidget):
         runner.moveToThread(thread)
         thread.started.connect(runner.run)
         runner.line.connect(self._append_log)
-        runner.failed.connect(lambda msg: self._append_log(f"Fundamentals error: {msg}"))
+        runner.failed.connect(lambda msg: (self._append_log(f"Fundamentals error: {msg}"), self._finalize_download()))
         runner.finished.connect(lambda: (self._append_log("Fundamentals finished."), thread.quit(), self._run_parquet_conversion()))
         thread.finished.connect(lambda: setattr(self, "_fundamentals_thread", None))
         self._fundamentals_runner = runner
@@ -621,6 +659,17 @@ class DataWidget(QWidget):
                 self.cmd = cmd
                 self.proc = None
 
+            def stop(self):
+                try:
+                    if self.proc and self.proc.poll() is None:
+                        self.proc.terminate()
+                        try:
+                            self.proc.wait(timeout=3)
+                        except Exception:
+                            self.proc.kill()
+                except Exception as e:
+                    self.failed.emit(f"Stop failed: {e}")
+
             def run(self):
                 try:
                     env = os.environ.copy()
@@ -653,7 +702,7 @@ class DataWidget(QWidget):
         runner.moveToThread(thread)
         thread.started.connect(runner.run)
         runner.line.connect(self._append_log)
-        runner.failed.connect(lambda msg: self._append_log(f"Parquet conversion error: {msg}"))
+        runner.failed.connect(lambda msg: (self._append_log(f"Parquet conversion error: {msg}"), self._finalize_download()))
         runner.finished.connect(lambda: (self._append_log("✅ Parquet conversion finished!"), thread.quit(), self._finalize_download()))
         thread.finished.connect(lambda: setattr(self, "_parquet_thread", None))
         self._parquet_runner = runner
