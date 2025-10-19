@@ -521,7 +521,7 @@ Always remind users about risk management and due diligence."""
             self.logger.info(f"Starting AI analysis for {symbol}")
             
             # Get API key
-            api_key = self.config.get("perplexity_api_key")
+            api_key = self.config.perplexity.api_key
             if not api_key:
                 self.logger.error("Perplexity API key not configured")
                 return None
