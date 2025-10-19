@@ -51,7 +51,7 @@ class MLConfig:
 class UIConfig:
     """UI Configuration"""
     theme: str = "dark"
-    update_interval: int = 1000  # milliseconds
+    update_interval: int = 10000  # milliseconds (10 seconds - reduced from 1s to improve performance)
     chart_timeframe: str = "1D"
     default_symbols: list = None
 
@@ -138,7 +138,7 @@ class ConfigManager:
         
         return UIConfig(
             theme=os.getenv("UI_THEME", "dark"),
-            update_interval=self._get_int("UI_UPDATE_INTERVAL", 1000),
+            update_interval=self._get_int("UI_UPDATE_INTERVAL", 10000),  # 10s default for better performance
             chart_timeframe=os.getenv("UI_CHART_TIMEFRAME", "1D"),
             default_symbols=default_symbols
         )

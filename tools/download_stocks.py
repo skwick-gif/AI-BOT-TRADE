@@ -369,7 +369,7 @@ def get_all_tickers():
     print(f"Tickers after filter: {len(filtered)} (Removed {removed} - filtered out tickers with '-' or invalid)")
     return filtered
 
-def update_price_data(ticker, start_date, folder, latest_only=False):
+def update_price_data(ticker, start_date, folder):
     file_path = os.path.join(folder, ticker, f"{ticker}_price.csv")
     os.makedirs(os.path.join(folder, ticker), exist_ok=True)
     if os.path.exists(file_path):
@@ -438,17 +438,6 @@ def update_price_data(ticker, start_date, folder, latest_only=False):
             print(f"{ticker}: Already up to date")
             return
     
-    # If latest_only mode, override to download only recent data (last 5 days)
-    if latest_only:
-        recent_start = (datetime.today() - timedelta(days=5)).strftime("%Y-%m-%d")
-        if last_date:
-            # Only download if we're missing recent days
-            days_missing = (datetime.today() - last_date).days
-            if days_missing <= 1:
-                print(f"{ticker}: Up to date (latest-only mode)")
-                return
-        start_download = recent_start
-        print(f"{ticker}: Downloading latest data from {start_download}")
     try:
         new_df = yf.download(ticker, start=start_download, progress=False, auto_adjust=True)
         if new_df.empty:

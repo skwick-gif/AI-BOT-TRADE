@@ -9,11 +9,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from download_stocks import get_all_tickers, update_price_data, DATA_FOLDER, START_DATE
 import argparse
 
-def download_all_prices(limit=None, latest_only=False):
+def download_all_prices(limit=None):
     """Download price data for all tickers"""
     tickers = get_all_tickers()
     print(f"Starting price data download for {len(tickers)} tickers...")
-    print(f"Options: limit={limit or 'all'}, latest_only={latest_only}")
+    print(f"Options: limit={limit or 'all'}")
     
     if limit:
         tickers = tickers[:int(limit)]
@@ -25,7 +25,7 @@ def download_all_prices(limit=None, latest_only=False):
     for i, ticker in enumerate(tickers, 1):
         try:
             print(f"[{i}/{len(tickers)}] Processing {ticker}...")
-            update_price_data(ticker, START_DATE, DATA_FOLDER, latest_only=latest_only)
+            update_price_data(ticker, START_DATE, DATA_FOLDER)
             success_count += 1
         except Exception as e:
             print(f"Error downloading price data for {ticker}: {e}")
@@ -39,7 +39,6 @@ def download_all_prices(limit=None, latest_only=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Download stock price data')
     parser.add_argument('--limit', type=int, help='Limit number of tickers to process')
-    parser.add_argument('--latest-only', action='store_true', help='Download only latest data (last 5 days)')
     
     args = parser.parse_args()
-    download_all_prices(limit=args.limit, latest_only=args.latest_only)
+    download_all_prices(limit=args.limit)
