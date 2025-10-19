@@ -24,6 +24,7 @@ from ui.dialogs.bracket_order_dialog import BracketOrderDialog
 from ui.dialogs.oco_order_dialog import OcoOrderDialog
 from ui.themes.theme_manager import ThemeManager
 from core.config_manager import ConfigManager
+from services.interreact_bridge_adapter import InterReactBridgeAdapter
 from services.ibkr_adapter_service import IBKRAdapterService
 from services.data_update_service import DataUpdateService
 from services.ai_service import AIService
@@ -48,6 +49,7 @@ class MainWindow(QMainWindow):
         
         # Initialize services
         self.ibkr_service = None
+        self.bridge_adapter = InterReactBridgeAdapter()  # New bridge adapter
         
         # Initialize theme manager
         self.theme_manager = ThemeManager()
@@ -115,11 +117,16 @@ class MainWindow(QMainWindow):
         self.status_timer.timeout.connect(self.update_status)
         self.status_timer.start(self.config.ui.update_interval)
 
-        # Initial sync from bridge status so UI reflects existing connection immediately
-        try:
-            self.sync_from_bridge_status()
-        except Exception:
-            pass
+        # Start InterReactBridge monitoring
+        if hasattr(self, 'bridge_adapter') and self.bridge_adapter:
+            self.bridge_adapter.start_monitoring()
+
+        # Delay initial sync to avoid blocking UI startup
+        # QTimer already imported at top of file
+        self.sync_timer = QTimer()
+        self.sync_timer.setSingleShot(True)
+        self.sync_timer.timeout.connect(self.sync_from_bridge_status)
+        self.sync_timer.start(500)
         
     # Auto-connect disabled by user request
     
@@ -148,19 +155,31 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.chat_widget, "🤖 AI Agent")
         
         # ML Tab (lazy import to avoid hard dependency at startup)
+        self.ml_widget = None
         try:
             from ui.widgets.ml_widget import MLWidget  # type: ignore
             self.ml_widget = MLWidget()
             self.tab_widget.addTab(self.ml_widget, "🧠 ML Training")
-        except Exception as e:
-            # Create a lightweight placeholder tab with error message
-            placeholder = QWidget()
+            self.logger.info("ML tab initialized successfully")
+        except ImportError as e:
+            # Missing dependencies (sklearn, scipy, etc.)
+            self.logger.warning(f"ML dependencies not available: {e}")
+            placeholder = QWidget(self)
             ph_layout = QVBoxLayout(placeholder)
-            msg = QLabel(f"ML module unavailable: {e}.\nThe application will continue without ML features. You can install/update SciPy and scikit-learn to enable it.")
+            msg = QLabel(f"ML module requires additional dependencies.\nPlease install: pip install scikit-learn scipy", placeholder)
             msg.setWordWrap(True)
             ph_layout.addWidget(msg)
-            self.tab_widget.addTab(placeholder, "🧠 ML (disabled)")
-            self.logger.warning(f"ML tab disabled due to import error: {e}")
+            self.tab_widget.addTab(placeholder, "🧠 ML (deps missing)")
+        except Exception as e:
+            # Other initialization errors
+            self.logger.error(f"Failed to initialize ML tab: {e}", exc_info=True)
+            placeholder = QWidget(self)
+            ph_layout = QVBoxLayout(placeholder)
+            msg = QLabel(f"ML tab initialization failed: {str(e)}\n\nCheck logs for details.", placeholder)
+            msg.setWordWrap(True)
+            msg.setStyleSheet("color: #ff4444;")
+            ph_layout.addWidget(msg)
+            self.tab_widget.addTab(placeholder, "🧠 ML (error)")
         
         # Watchlist Tab
         self.watchlist_widget = WatchlistWidget()
@@ -415,7 +434,8 @@ class MainWindow(QMainWindow):
         # Periodic bridge status poll to reflect hints
         try:
             self._bridge_status_timer = QTimer(self)
-            self._bridge_status_timer.setInterval(5000)
+            # Poll less frequently and use shorter timeout to avoid UI freezing
+            self._bridge_status_timer.setInterval(15000)  # Check every 15 seconds instead of 5
             self._bridge_status_timer.timeout.connect(self._poll_bridge_status)
             self._bridge_status_timer.start()
         except Exception:
@@ -517,25 +537,36 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Diagnostics Error", str(e))
 
     def sync_from_bridge_status(self):
-        if not self.ibkr_service:
-            self.ibkr_service = IBKRAdapterService(self.config.ibkr)
+        """Sync connection status from InterReactBridge"""
         try:
-            if self.ibkr_service.sync_connected_from_status():
-                # Wire into widgets when connected
-                if hasattr(self, 'dashboard_widget'):
-                    self.dashboard_widget.set_ibkr_service(self.ibkr_service)
-                if hasattr(self, 'ai_trading_widget'):
-                    self.ai_trading_widget.set_ibkr_service(self.ibkr_service)
-                    self.ai_trading_widget.set_ibkr_status(True)
-                self.connection_status_changed.emit(True)
-                self.status_bar.showMessage("Synced connected state from bridge", 5000)
+            # Check if bridge is connected
+            if self.bridge_adapter and self.bridge_adapter.is_connected():
+                # Get connection status from bridge
+                status = self.bridge_adapter.get_connection_status()
+                
+                if status and status.get('isConnected'):
+                    # TWS is connected - wire bridge adapter into widgets
+                    if hasattr(self, 'dashboard_widget') and self.dashboard_widget:
+                        self.dashboard_widget.set_ibkr_service(self.bridge_adapter)
+                        self.logger.info("Bridge adapter set for dashboard")
+                    
+                    if hasattr(self, 'ai_trading_widget') and self.ai_trading_widget:
+                        self.ai_trading_widget.set_ibkr_service(self.bridge_adapter)
+                        self.ai_trading_widget.set_ibkr_status(True)
+                        self.logger.info("Bridge adapter set for AI trading")
+                    
+                    self.connection_status_changed.emit(True)
+                    self.status_bar.showMessage(f"✅ Connected to TWS via InterReactBridge", 5000)
+                else:
+                    # Bridge running but TWS not connected
+                    self.status_bar.showMessage("⚠️ InterReactBridge running but TWS not connected", 7000)
             else:
-                # Surface hint
-                st = self.ibkr_service.get_status()
-                hint = st.get('hint') if isinstance(st, dict) else None
-                self.status_bar.showMessage(f"Bridge not connected{(' - '+hint) if hint else ''}", 7000)
+                # Bridge not running
+                self.status_bar.showMessage("❌ InterReactBridge server not running on localhost:5080", 7000)
+                
         except Exception as e:
-            QMessageBox.warning(self, "Sync Error", str(e))
+            self.logger.error(f"Error syncing bridge status: {e}", exc_info=True)
+            self.status_bar.showMessage(f"❌ Error connecting to bridge: {e}", 7000)
 
     def retry_bridge_connect(self):
         if not self.ibkr_service:
@@ -561,13 +592,37 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Retry Error", str(e))
 
     def _poll_bridge_status(self):
+        """Poll bridge status in a non-blocking way"""
         try:
-            svc = self.ibkr_service or IBKRAdapterService(self.config.ibkr)
-            status = svc.get_status()
-            if isinstance(status, dict) and status.get('connected'):
+            # Don't block UI thread - run in background
+            from PyQt6.QtCore import QThreadPool, QRunnable
+            
+            class StatusPollRunnable(QRunnable):
+                def __init__(self, window):
+                    super().__init__()
+                    self.window = window
+                    
+                def run(self):
+                    try:
+                        svc = self.window.ibkr_service or IBKRAdapterService(self.window.config.ibkr)
+                        status = svc.get_status()
+                        # Update UI in main thread
+                        if isinstance(status, dict):
+                            self.window._update_status_from_poll(status)
+                    except Exception:
+                        pass
+            
+            QThreadPool.globalInstance().start(StatusPollRunnable(self))
+        except Exception:
+            pass
+    
+    def _update_status_from_poll(self, status):
+        """Update status from background poll (called from main thread)"""
+        try:
+            if status.get('connected'):
                 # keep UI in sync if user connected via another process
                 if not (self.ibkr_service and self.ibkr_service.is_connected()):
-                    self.ibkr_service = svc
+                    self.ibkr_service = IBKRAdapterService(self.config.ibkr)
                     if hasattr(self, 'dashboard_widget'):
                         self.dashboard_widget.set_ibkr_service(self.ibkr_service)
                     if hasattr(self, 'ai_trading_widget'):
@@ -576,7 +631,7 @@ class MainWindow(QMainWindow):
                     self.connection_status_changed.emit(True)
             else:
                 # surface hint when disconnected
-                hint = status.get('hint') if isinstance(status, dict) else None
+                hint = status.get('hint')
                 if hint:
                     self.status_bar.showMessage(f"IBKR: {hint}", 5000)
         except Exception:
@@ -865,25 +920,29 @@ class MainWindow(QMainWindow):
         """Update status information"""
         self.update_time()
         
-        # Update connection status if service exists
-        if self.ibkr_service:
-            is_connected = self.ibkr_service.is_connected()
-            current_status = "Connected" in self.connection_status_label.text()
-            if is_connected != current_status:
-                self.connection_status_changed.emit(is_connected)
-            # When disconnected, surface hint from bridge status
-            if not is_connected:
-                try:
-                    status = self.ibkr_service.get_status()
-                    if isinstance(status, dict):
-                        code = status.get('errorCode') or status.get('error_code')
-                        hint = status.get('hint')
-                        if hint or code:
-                            msg = "IBKR: " + (f"{code} - {hint}" if code else hint)
-                            if hasattr(self, 'status_bar'):
-                                self.status_bar.showMessage(msg, 8000)
-                except Exception:
-                    pass
+        # Update connection status using bridge adapter (using cached values)
+        if hasattr(self, 'bridge_adapter') and self.bridge_adapter:
+            is_bridge_connected = self.bridge_adapter.is_connected()
+            is_tws_connected = self.bridge_adapter.is_tws_connected()
+            
+            if is_bridge_connected and is_tws_connected:
+                # Both bridge and TWS connected
+                if "🟢" not in self.connection_status_label.text():
+                    self.connection_status_label.setText("🟢 Connected to TWS")
+                    self.connection_status_label.setStyleSheet("color: #4CAF50;")
+                    self.connection_status_changed.emit(True)
+            elif is_bridge_connected:
+                # Bridge running but TWS not connected
+                if "🟡" not in self.connection_status_label.text():
+                    self.connection_status_label.setText("🟡 TWS Disconnected")
+                    self.connection_status_label.setStyleSheet("color: #FFA726;")
+                    self.connection_status_changed.emit(False)
+            else:
+                # Bridge not running
+                if "🔴" not in self.connection_status_label.text():
+                    self.connection_status_label.setText("🔴 Bridge Not Running")
+                    self.connection_status_label.setStyleSheet("color: #EF5350;")
+                    self.connection_status_changed.emit(False)
     
     def update_time(self):
         """Update time display"""

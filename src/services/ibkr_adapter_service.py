@@ -168,7 +168,8 @@ class IBKRAdapterService:
     def get_status(self) -> Dict[str, Any]:
         """Return bridge connection status (/connect/status)."""
         try:
-            response = requests.get(f"{self.base_url}/connect/status", timeout=5)
+            # Use shorter timeout to prevent UI freezing
+            response = requests.get(f"{self.base_url}/connect/status", timeout=0.5)
             response.raise_for_status()
             data = response.json()
             # Normalize keys

@@ -1575,11 +1575,15 @@ class ScanCriteriaWidget(QFrame):
 
         # Group: Quick Scan Presets (narrow, vertical) with per-preset strategy checkboxes
         self.create_preset_buttons()
+        # Create strategies group (with ai_analysis_chk)
+        self.create_strategies_group()
         presets_group = QGroupBox("Quick Scan Presets")
         pg_layout = QVBoxLayout(presets_group)
         pg_layout.setContentsMargins(6, 6, 6, 6)
         pg_layout.setSpacing(6)
         pg_layout.addWidget(self.preset_frame)
+        # Add strategies group below preset buttons
+        pg_layout.addWidget(self.strategies_group)
 
         # Create strategy configuration groups (will be added into a scroll area on the right)
         self.create_momentum_group()
