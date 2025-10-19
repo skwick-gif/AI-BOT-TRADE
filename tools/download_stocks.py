@@ -18,6 +18,11 @@ warnings.filterwarnings("ignore", message="Unknown datetime string format", cate
 
 import yfinance as yf
 
+# Set yfinance cache to D drive to avoid filling up C drive
+CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", ".cache", "yfinance")
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.environ['YFINANCE_CACHE_DIR'] = os.path.abspath(CACHE_DIR)
+
 DATA_FOLDER = "stock_data"
 os.makedirs(DATA_FOLDER, exist_ok=True)
 START_DATE = "2020-01-01"
